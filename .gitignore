@@ -1,0 +1,9 @@
+node_modules
+.next
+out
+*.tsbuildinfo
+next-env.d.ts
+.DS_Store
+
+# Claude Code local dev-server config
+.claude/

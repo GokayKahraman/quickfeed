@@ -1,0 +1,166 @@
+/**
+ * Byte storage for a formatted document.
+ *
+ * The preferred backing is an OPFS file opened with a sync access handle: the
+ * bytes live on disk, so a 3 GB feed costs a few hundred kilobytes of RAM.
+ * Browsers without OPFS fall back to an in-memory chunk list, which is capped
+ * and reported to the user rather than allowed to crash the tab.
+ */
+
+export interface BackingStore {
+  readonly size: number;
+  readonly persistent: boolean;
+  append(bytes: Uint8Array): void;
+  read(start: number, end: number): Uint8Array;
+  /** Snapshot for download. Disk-backed stores hand back a File, not a copy. */
+  snapshot(name: string): Promise<Blob>;
+  dispose(): Promise<void>;
+}
+
+export function opfsSupported(): boolean {
+  return (
+    typeof navigator !== "undefined" &&
+    !!navigator.storage?.getDirectory &&
+    typeof FileSystemFileHandle !== "undefined" &&
+    "createSyncAccessHandle" in FileSystemFileHandle.prototype
+  );
+}
+
+const DIR = "quickfeed-tmp";
+
+class OpfsStore implements BackingStore {
+  readonly persistent = true;
+  size = 0;
+  private access: FileSystemSyncAccessHandle | null;
+
+  constructor(
+    private handle: FileSystemFileHandle,
+    private dir: FileSystemDirectoryHandle,
+    private fileName: string,
+    access: FileSystemSyncAccessHandle,
+  ) {
+    this.access = access;
+  }
+
+  private need(): FileSystemSyncAccessHandle {
+    if (!this.access) throw new Error("The temporary file is closed.");
+    return this.access;
+  }
+
+  append(bytes: Uint8Array): void {
+    this.need().write(bytes, { at: this.size });
+    this.size += bytes.length;
+  }
+
+  read(start: number, end: number): Uint8Array {
+    const clampedEnd = Math.min(end, this.size);
+    if (clampedEnd <= start) return new Uint8Array(0);
+    const buf = new Uint8Array(clampedEnd - start);
+    const n = this.need().read(buf, { at: start });
+    return n === buf.length ? buf : buf.subarray(0, n);
+  }
+
+  /**
+   * The sync handle holds an exclusive lock, so it is released just long
+   * enough to take the File reference, then re-acquired for further reads.
+   */
+  async snapshot(): Promise<Blob> {
+    const access = this.need();
+    access.flush();
+    access.close();
+    this.access = null;
+    const file = await this.handle.getFile();
+    this.access = await this.handle.createSyncAccessHandle();
+    return file;
+  }
+
+  async dispose(): Promise<void> {
+    try {
+      this.access?.flush();
+      this.access?.close();
+    } catch {
+      /* already closed */
+    }
+    this.access = null;
+    try {
+      await this.dir.removeEntry(this.fileName);
+    } catch {
+      /* best effort */
+    }
+  }
+}
+
+class MemoryStore implements BackingStore {
+  readonly persistent = false;
+  size = 0;
+  private chunks: Uint8Array[] = [];
+  private starts: number[] = [];
+
+  append(bytes: Uint8Array): void {
+    this.starts.push(this.size);
+    this.chunks.push(bytes);
+    this.size += bytes.length;
+  }
+
+  read(start: number, end: number): Uint8Array {
+    const clampedEnd = Math.min(end, this.size);
+    if (clampedEnd <= start) return new Uint8Array(0);
+    const out = new Uint8Array(clampedEnd - start);
+    let lo = 0;
+    let hi = this.starts.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (this.starts[mid] <= start) lo = mid;
+      else hi = mid - 1;
+    }
+    let written = 0;
+    for (let i = lo; i < this.chunks.length && written < out.length; i++) {
+      const chunkStart = this.starts[i];
+      const chunk = this.chunks[i];
+      const from = Math.max(0, start - chunkStart);
+      const to = Math.min(chunk.length, clampedEnd - chunkStart);
+      if (to <= from) continue;
+      out.set(chunk.subarray(from, to), written);
+      written += to - from;
+    }
+    return out;
+  }
+
+  async snapshot(): Promise<Blob> {
+    return new Blob(this.chunks as BlobPart[], { type: "application/xml" });
+  }
+
+  async dispose(): Promise<void> {
+    this.chunks = [];
+    this.starts = [];
+    this.size = 0;
+  }
+}
+
+export async function createBackingStore(id: string): Promise<BackingStore> {
+  if (opfsSupported()) {
+    try {
+      const root = await navigator.storage.getDirectory();
+      const dir = await root.getDirectoryHandle(DIR, { create: true });
+      const fileName = `${id}.xml`;
+      const handle = await dir.getFileHandle(fileName, { create: true });
+      const access = await handle.createSyncAccessHandle();
+      access.truncate(0);
+      return new OpfsStore(handle, dir, fileName, access);
+    } catch {
+      /* fall through to memory */
+    }
+  }
+  return new MemoryStore();
+}
+
+/** Clears leftovers from a previous session or a hard refresh. */
+export async function purgeTempFiles(): Promise<void> {
+  if (!opfsSupported()) return;
+  try {
+    const root = await navigator.storage.getDirectory();
+    await root.removeEntry(DIR, { recursive: true });
+  } catch {
+    /* nothing to clean */
+  }
+}
