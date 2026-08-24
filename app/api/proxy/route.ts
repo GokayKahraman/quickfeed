@@ -2,6 +2,12 @@ import { lookup } from "node:dns/promises";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+/**
+ * Large feeds take a while to stream through. 60s is the ceiling on Vercel's
+ * Hobby plan and a valid value on every plan; without it the function is cut
+ * off at the much shorter default, mid-feed.
+ */
+export const maxDuration = 60;
 
 /**
  * CORS escape hatch for feed URLs.

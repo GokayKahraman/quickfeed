@@ -75,6 +75,26 @@ Tarayıcı önce adresi doğrudan okumayı dener. Hedef site CORS başlığı g�
 tamponlamaz ve saklamaz** — yanıt gövdesini olduğu gibi tarayıcıya aktarır. Yerel ağ ve
 loopback adresleri DNS çözümlemesi sonrası engellenir.
 
+## Vercel'e dağıtım
+
+Repoyu Vercel'de import etmek yeterli — framework Next.js olarak algılanır, ortam
+değişkeni ya da ek ayar gerekmez.
+
+Uygulamanın tamamı tarayıcıda çalıştığından dosya seçme, biçimlendirme, görüntüleme,
+sorgulama ve indirme sunucu sınırlarından etkilenmez. Tek istisna `/api/proxy`: bu bir
+Vercel Function olarak çalışır ve şunlara tabidir:
+
+- **Süre sınırı.** `maxDuration = 60` ayarlı; Hobby planının tavanı bu. Çok büyük bir
+  beslemeyi proxy üzerinden çekmek 60 saniyeyi aşarsa aktarım yarıda kesilir.
+- **Bant genişliği.** Proxy üzerinden geçen her bayt Vercel kotanızdan düşer.
+- **Yanıt boyutu.** Yanıt tamponlanmadan akıtılır, ki büyük gövdeler için doğru yol budur;
+  yine de ilk dağıtımdan sonra gerçekten büyük bir beslemeyle bir kez denemekte fayda var.
+
+Bunların hiçbiri proxy kapalıyken geçerli değil: adres doğrudan tarayıcıdan çekildiğinde
+trafik Vercel'e hiç uğramaz. Proxy yalnızca hedef site CORS başlığı göndermediğinde gerekir.
+
+OPFS güvenli bağlam ister; Vercel HTTPS sunduğu için sorun olmaz.
+
 ## Yapı
 
 ```
