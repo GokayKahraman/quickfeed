@@ -2,11 +2,12 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Intake from "../components/Intake";
+import FindBar from "../components/FindBar";
 import QueryBar, { newCondition } from "../components/QueryBar";
 import Tape from "../components/Tape";
 import XmlViewer, { type ViewerApi } from "../components/XmlViewer";
 import { FeedEngine, formatBytes, formatCount, formatMs, triggerDownload } from "../lib/engine";
-import type { DocSummary, LoadProgress, Query } from "../lib/types";
+import type { DocSummary, FindMatch, FindOptions, LoadProgress, Query } from "../lib/types";
 
 type Phase = "intake" | "ready" | "viewing";
 
@@ -33,6 +34,20 @@ export default function Page() {
   const [viewport, setViewport] = useState({ first: 0, visible: 0 });
   /** Set when the user rejects the auto-detected record tag. */
   const [recordOverride, setRecordOverride] = useState<string | null>(null);
+
+  const [findOpen, setFindOpen] = useState(false);
+  const [findQuery, setFindQuery] = useState("");
+  const [findOptions, setFindOptions] = useState<FindOptions>({
+    caseSensitive: false,
+    wholeWord: false,
+    regex: false,
+  });
+  const [hits, setHits] = useState<FindMatch[]>([]);
+  const [hitTotal, setHitTotal] = useState(0);
+  const [hitTruncated, setHitTruncated] = useState(false);
+  const [currentHit, setCurrentHit] = useState(0);
+  const [searching, setSearching] = useState(false);
+  const [findError, setFindError] = useState<string | null>(null);
 
   useEffect(() => {
     const engine = new FeedEngine();
@@ -157,6 +172,97 @@ export default function Page() {
     }
     return source.histogram;
   }, [source, result, activeKind, recordInfo]);
+
+  /* ------------------------------------------------------------------ find */
+
+  const activeDocId = active?.id ?? null;
+
+  /* Debounced so a long word does not queue one full-document scan per
+     keystroke; the worker drops any scan a newer one supersedes. */
+  useEffect(() => {
+    const engine = engineRef.current;
+    if (!engine || !activeDocId || !findOpen) return;
+    if (!findQuery) {
+      setHits([]);
+      setHitTotal(0);
+      setHitTruncated(false);
+      setFindError(null);
+      setSearching(false);
+      return;
+    }
+    setSearching(true);
+    let live = true;
+    const timer = setTimeout(() => {
+      engine
+        .search(activeDocId, findQuery, findOptions)
+        .then((res) => {
+          if (!live || res.superseded) return;
+          setHits(res.matches);
+          setHitTotal(res.total);
+          setHitTruncated(res.truncated);
+          setCurrentHit(0);
+          setFindError(null);
+          setSearching(false);
+          if (res.matches.length > 0) {
+            viewerApi.current?.scrollToLine(res.matches[0].line, { center: true });
+          }
+        })
+        .catch((err: Error) => {
+          if (!live) return;
+          setHits([]);
+          setHitTotal(0);
+          setFindError(err.message);
+          setSearching(false);
+        });
+    }, 300);
+    return () => {
+      live = false;
+      clearTimeout(timer);
+    };
+  }, [activeDocId, findOpen, findQuery, findOptions]);
+
+  // Switching documents invalidates hit positions.
+  useEffect(() => {
+    setHits([]);
+    setHitTotal(0);
+    setCurrentHit(0);
+  }, [activeDocId]);
+
+  const stepHit = useCallback(
+    (delta: number) => {
+      if (hits.length === 0) return;
+      const next = (currentHit + delta + hits.length) % hits.length;
+      setCurrentHit(next);
+      viewerApi.current?.scrollToLine(hits[next].line, { center: true });
+    },
+    [hits, currentHit],
+  );
+
+  const closeFind = useCallback(() => {
+    setFindOpen(false);
+    setHits([]);
+    setHitTotal(0);
+    setFindError(null);
+  }, []);
+
+  /* Ctrl/Cmd+F is taken over on purpose: the browser's own find can only see
+     the ~35 rows the viewer keeps in the DOM. */
+  useEffect(() => {
+    if (phase !== "viewing") return;
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "f") {
+        e.preventDefault();
+        setFindOpen(true);
+      } else if (e.key === "Escape" && findOpen) {
+        closeFind();
+      } else if (e.key === "F3") {
+        e.preventDefault();
+        stepHit(e.shiftKey ? -1 : 1);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [phase, findOpen, closeFind, stepHit]);
 
   /* ---------------------------------------------------------------- intake */
 
@@ -361,17 +467,36 @@ export default function Page() {
         onSeek={(line) => viewerApi.current?.scrollToLine(line)}
       />
 
-      <XmlViewer
-        engine={engineRef.current!}
-        docId={doc.id}
-        lineCount={doc.lineCount}
-        apiRef={viewerApi}
-        onViewport={onViewport}
-        emptyMessage={{
-          title: "No matching records",
-          detail: "Loosen the condition, or check the tag name.",
-        }}
-      />
+      <div className="viewer-shell">
+        {findOpen && (
+          <FindBar
+            query={findQuery}
+            onQueryChange={setFindQuery}
+            options={findOptions}
+            onOptionsChange={setFindOptions}
+            total={hitTotal}
+            truncated={hitTruncated}
+            current={currentHit}
+            searching={searching}
+            error={findError}
+            onStep={stepHit}
+            onClose={closeFind}
+          />
+        )}
+        <XmlViewer
+          engine={engineRef.current!}
+          docId={doc.id}
+          lineCount={doc.lineCount}
+          apiRef={viewerApi}
+          onViewport={onViewport}
+          hits={hits}
+          currentHit={currentHit}
+          emptyMessage={{
+            title: "No matching records",
+            detail: "Loosen the condition, or check the tag name.",
+          }}
+        />
+      </div>
 
       <footer className="status">
         <span>
@@ -382,12 +507,17 @@ export default function Page() {
         {result && activeKind === "source" && (
           <span className="live">◆ {formatCount(result.recordCount)} matches marked</span>
         )}
+        {findOpen && hitTotal > 0 && (
+          <span className="live">
+            ⌕ {formatCount(hitTotal)}{hitTruncated ? "+" : ""} hits
+          </span>
+        )}
         <span className="spacer" />
         {error && <span className="warnish">{error}</span>}
         <span className={doc.persistent ? "" : "warnish"}>
           {doc.persistent ? "browser disk" : "memory mode"}
         </span>
-        <span>{formatMs(doc.elapsedMs)}</span>
+        <span className="narrow-hide">{formatMs(doc.elapsedMs)}</span>
       </footer>
     </div>
   );

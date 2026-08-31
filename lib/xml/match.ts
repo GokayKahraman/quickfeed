@@ -19,6 +19,56 @@ export function fold(s: string): string {
   return out.toLowerCase();
 }
 
+/**
+ * Length-preserving fold, for search.
+ *
+ * `fold` is used on whole values where only equality matters, but the find bar
+ * reports column offsets into the original line — so a fold that changed the
+ * string's length would put every highlight in the wrong place. Mapping one
+ * character at a time and keeping the original whenever lowercasing would
+ * resize it guarantees index-for-index alignment.
+ */
+export function foldForSearch(s: string): string {
+  let out = "";
+  for (const ch of s) {
+    const mapped = FOLD[ch];
+    if (mapped) {
+      out += mapped;
+      continue;
+    }
+    const lower = ch.toLowerCase();
+    out += lower.length === ch.length ? lower : ch;
+  }
+  return out;
+}
+
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Compiles a find query.
+ *
+ * Plain searches fold both sides so "yesil" finds "Yeşil", matching how the
+ * query bar behaves. Regex searches never fold: folding a pattern would rewrite
+ * `\S` into `\s` and silently invert what the user asked for.
+ */
+export function buildSearchRegex(
+  query: string,
+  opts: { caseSensitive: boolean; wholeWord: boolean; regex: boolean },
+): { re: RegExp; foldHaystack: boolean } {
+  const foldHaystack = !opts.regex && !opts.caseSensitive;
+  let source = opts.regex
+    ? query
+    : escapeRegex(foldHaystack ? foldForSearch(query) : query);
+  // `\\b` here is a literal backslash-b for the regex, not a backspace escape.
+  if (opts.wholeWord) source = `\\b(?:${source})\\b`;
+  return {
+    re: new RegExp(source, opts.caseSensitive ? "g" : "gi"),
+    foldHaystack,
+  };
+}
+
 export type RecordValues = Map<string, string[]>;
 
 /** Local name of `g:price` is `price`; feeds are inconsistent about prefixes. */

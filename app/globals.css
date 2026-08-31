@@ -844,6 +844,102 @@ select {
    Viewer
    -------------------------------------------------------------------------- */
 
+/* Holds the viewer plus the floating find bar; the bar must not scroll away
+   with the document, so it sits outside the scroll container. */
+.viewer-shell {
+  flex: 1;
+  position: relative;
+  display: flex;
+  min-height: 0;
+}
+
+.find {
+  position: absolute;
+  top: 10px;
+  right: 22px;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-sm);
+  background: var(--ink-870);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  max-width: calc(100% - 44px);
+}
+.find-input {
+  width: 230px;
+  height: 28px;
+  flex: 1 1 auto;
+}
+.find-input.bad {
+  border-color: var(--signal);
+}
+.find-toggles {
+  display: flex;
+  gap: 2px;
+  flex: none;
+}
+.find-toggles button {
+  width: 26px;
+  height: 26px;
+  border-radius: 3px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--faint);
+  border: 1px solid transparent;
+  transition: color 0.14s, background 0.14s, border-color 0.14s;
+}
+.find-toggles button:hover {
+  color: var(--paper);
+  background: var(--ink-840);
+}
+.find-toggles button[aria-pressed="true"] {
+  color: var(--signal);
+  border-color: var(--signal);
+  background: var(--signal-glow);
+}
+.find-status {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--dim);
+  white-space: nowrap;
+  min-width: 62px;
+  text-align: right;
+  flex: none;
+}
+.find-status.none {
+  color: var(--signal);
+}
+.find-step {
+  width: 24px;
+  height: 26px;
+  border-radius: 3px;
+  color: var(--dim);
+  font-size: 13px;
+  line-height: 1;
+  flex: none;
+}
+.find-step:hover:not(:disabled) {
+  color: var(--paper);
+  background: var(--ink-840);
+}
+.find-step:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/* Find hits. The stepped-to hit is the loud one; the rest stay legible. */
+.hit {
+  background: rgba(255, 74, 74, 0.24);
+  border-radius: 2px;
+}
+.hit.current {
+  background: var(--signal);
+  color: var(--signal-ink);
+}
+
 .viewer {
   flex: 1;
   position: relative;
@@ -1018,6 +1114,25 @@ select {
   .row .no {
     width: 56px;
     padding-right: 8px;
+  }
+  .find {
+    left: 8px;
+    right: 8px;
+    max-width: none;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .find-input {
+    flex-basis: 100%;
+  }
+  .find-status {
+    flex: 1;
+    text-align: left;
+  }
+  /* The status bar clips rather than wraps, so the least useful reading goes
+     first when there is no room. */
+  .narrow-hide {
+    display: none;
   }
 }
 

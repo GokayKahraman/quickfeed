@@ -28,6 +28,19 @@ export function opfsSupported(): boolean {
 
 const DIR = "quickfeed-tmp";
 
+/**
+ * Per-worker prefix for temporary file names.
+ *
+ * Document ids restart at doc1 on every page load, so a fixed name collides
+ * with the file a previous load — or a second open tab — still holds a sync
+ * access handle on. Acquiring that handle then fails and the whole document
+ * silently drops to the in-memory store. A unique prefix keeps sessions apart.
+ */
+const SESSION =
+  typeof crypto !== "undefined" && crypto.randomUUID
+    ? crypto.randomUUID().slice(0, 8)
+    : Math.floor(Math.random() * 0xffffffff).toString(16);
+
 class OpfsStore implements BackingStore {
   readonly persistent = true;
   size = 0;
@@ -142,7 +155,7 @@ export async function createBackingStore(id: string): Promise<BackingStore> {
     try {
       const root = await navigator.storage.getDirectory();
       const dir = await root.getDirectoryHandle(DIR, { create: true });
-      const fileName = `${id}.xml`;
+      const fileName = `${SESSION}-${id}.xml`;
       const handle = await dir.getFileHandle(fileName, { create: true });
       const access = await handle.createSyncAccessHandle();
       access.truncate(0);
@@ -154,12 +167,26 @@ export async function createBackingStore(id: string): Promise<BackingStore> {
   return new MemoryStore();
 }
 
-/** Clears leftovers from a previous session or a hard refresh. */
+/**
+ * Clears leftovers from sessions that ended without cleaning up.
+ *
+ * Files belonging to a live tab are skipped by name, and any that are still
+ * locked refuse deletion anyway — so this cannot pull the floor out from under
+ * a second window that has the app open.
+ */
 export async function purgeTempFiles(): Promise<void> {
   if (!opfsSupported()) return;
   try {
     const root = await navigator.storage.getDirectory();
-    await root.removeEntry(DIR, { recursive: true });
+    const dir = await root.getDirectoryHandle(DIR, { create: false });
+    for await (const name of (dir as unknown as { keys(): AsyncIterable<string> }).keys()) {
+      if (name.startsWith(SESSION)) continue;
+      try {
+        await dir.removeEntry(name);
+      } catch {
+        /* still held by another tab */
+      }
+    }
   } catch {
     /* nothing to clean */
   }

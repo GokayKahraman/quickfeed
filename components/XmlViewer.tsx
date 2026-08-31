@@ -3,10 +3,11 @@
 import { useEffect, useLayoutEffect, useReducer, useRef, useState } from "react";
 import type { FeedEngine } from "../lib/engine";
 import { formatCount } from "../lib/engine";
-import { highlightLine } from "./highlight";
+import { applyHits, highlightLine } from "./highlight";
+import type { FindMatch } from "../lib/types";
 
 export interface ViewerApi {
-  scrollToLine: (line: number) => void;
+  scrollToLine: (line: number, opts?: { center?: boolean }) => void;
 }
 
 interface Props {
@@ -16,6 +17,10 @@ interface Props {
   apiRef: React.RefObject<ViewerApi | null>;
   onViewport: (first: number, visible: number) => void;
   emptyMessage?: { title: string; detail: string };
+  /** Find hits for this document, ordered by line then column. */
+  hits?: FindMatch[];
+  /** Index into `hits` of the one currently stepped to. */
+  currentHit?: number;
 }
 
 const LINE_H = 20;
@@ -28,6 +33,18 @@ const CACHE_MAX = 64;
  * which is all it can be for a document of tens of millions of lines anyway.
  */
 const MAX_SCROLL_PX = 8_000_000;
+
+/** First index whose line is >= `line`. */
+function lowerBound(hits: FindMatch[], line: number): number {
+  let lo = 0;
+  let hi = hits.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (hits[mid].line < line) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
 
 function useLineCache(engine: FeedEngine, docId: string, first: number, rows: number) {
   const cache = useRef(new Map<number, string[]>());
@@ -94,6 +111,8 @@ export default function XmlViewer({
   apiRef,
   onViewport,
   emptyMessage,
+  hits,
+  currentHit = -1,
 }: Props) {
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const [scrollTop, setScrollTop] = useState(0);
@@ -125,30 +144,48 @@ export default function XmlViewer({
 
   useEffect(() => {
     apiRef.current = {
-      scrollToLine: (line: number) => {
+      scrollToLine: (line: number, opts) => {
         const el = scrollerRef.current;
         if (!el) return;
-        const target = maxFirst > 0 ? (Math.min(line, maxFirst) / maxFirst) * maxScroll : 0;
+        // Stepping through find hits reads better with the hit in the middle
+        // than pinned to the top edge.
+        const wanted = opts?.center ? line - Math.floor(rows / 2) : line;
+        const clamped = Math.max(0, Math.min(wanted, maxFirst));
+        const target = maxFirst > 0 ? (clamped / maxFirst) * maxScroll : 0;
         el.scrollTop = target;
         setScrollTop(target);
       },
     };
-  }, [apiRef, maxFirst, maxScroll]);
+  }, [apiRef, maxFirst, maxScroll, rows]);
 
   useEffect(() => {
     onViewport(first, Math.min(rows, lineCount));
   }, [first, rows, lineCount, onViewport]);
 
+  // Hits arrive sorted, so the window's slice is one binary search away
+  // rather than a scan of what may be twenty thousand entries.
+  const hitStart = hits && hits.length > 0 ? lowerBound(hits, first) : 0;
+
   const visible: React.ReactNode[] = [];
   for (let i = first; i < Math.min(lineCount, first + rows); i++) {
     const text = getLine(i);
+    let spans = text === null ? null : highlightLine(text);
+    if (spans && hits) {
+      const lineHits: { col: number; len: number; current: boolean }[] = [];
+      for (let h = hitStart; h < hits.length && hits[h].line <= i; h++) {
+        if (hits[h].line === i) {
+          lineHits.push({ col: hits[h].col, len: hits[h].len, current: h === currentHit });
+        }
+      }
+      if (lineHits.length > 0) spans = applyHits(spans, lineHits);
+    }
     visible.push(
       <div className={text === null ? "row pending" : "row"} key={i}>
         <span className="no">{formatCount(i + 1)}</span>
         <span className="code">
-          {text === null
+          {spans === null
             ? "···"
-            : highlightLine(text).map((s, k) => (
+            : spans.map((s, k) => (
                 <span className={s.c} key={k}>
                   {s.t}
                 </span>

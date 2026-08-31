@@ -104,3 +104,38 @@ export function highlightLine(line: string): Span[] {
 
   return out;
 }
+
+/**
+ * Overlays find hits onto syntax spans.
+ *
+ * The two colourings are computed independently — one from XML structure, one
+ * from character offsets — so spans are split wherever a hit starts or ends and
+ * the pieces inside a hit pick up the highlight class.
+ */
+export function applyHits(
+  spans: Span[],
+  hits: { col: number; len: number; current: boolean }[],
+): Span[] {
+  if (hits.length === 0) return spans;
+  const out: Span[] = [];
+  let col = 0;
+  for (const span of spans) {
+    const start = col;
+    const end = col + span.t.length;
+    col = end;
+    let cursor = start;
+    for (const hit of hits) {
+      const from = Math.max(cursor, hit.col);
+      const to = Math.min(end, hit.col + hit.len);
+      if (to <= from) continue;
+      if (from > cursor) out.push({ c: span.c, t: span.t.slice(cursor - start, from - start) });
+      out.push({
+        c: `${span.c} hit${hit.current ? " current" : ""}`,
+        t: span.t.slice(from - start, to - start),
+      });
+      cursor = to;
+    }
+    if (cursor < end) out.push({ c: span.c, t: span.t.slice(cursor - start) });
+  }
+  return out;
+}

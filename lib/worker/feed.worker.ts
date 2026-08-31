@@ -9,8 +9,14 @@
 import { createBackingStore, purgeTempFiles, type BackingStore } from "../store/backing";
 import { DocReader, DocWriter, type LineIndex } from "../store/document";
 import { formatStream, maybeDecompress, runQuery, Cancelled } from "../xml/pipeline";
-import { describeQuery } from "../xml/match";
-import type { DocSummary, LoadProgress, WorkerRequest, WorkerResponse } from "../types";
+import { buildSearchRegex, describeQuery, foldForSearch } from "../xml/match";
+import type {
+  DocSummary,
+  FindMatch,
+  LoadProgress,
+  WorkerRequest,
+  WorkerResponse,
+} from "../types";
 
 interface OpenDoc {
   summary: DocSummary;
@@ -20,10 +26,18 @@ interface OpenDoc {
 }
 
 const docs = new Map<string, OpenDoc>();
+/** Lines pulled per search batch; big enough to amortise, small enough to yield. */
+const SEARCH_BATCH = 4096;
+/** Hits kept for navigation. Beyond this the bar reports the total as "+". */
+const MAX_MATCHES = 20000;
+const yieldToLoop = () => new Promise<void>((r) => setTimeout(r, 0));
+
 let cancelled = false;
 let docSeq = 0;
 /** Set while a download snapshot has the file handle closed. */
 let snapshotting: Promise<void> | null = null;
+/** Newest find request; an older scan sees the mismatch and bails out. */
+let searchSeq = 0;
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
 
@@ -234,6 +248,68 @@ async function handleQuery(req: Extract<WorkerRequest, { type: "query" }>): Prom
   post({ id: req.id, type: "doc", doc: summary });
 }
 
+/**
+ * Scans the whole document for a find query.
+ *
+ * The viewer only ever holds ~35 lines, so the browser's own find has nothing
+ * to search — this walks every line through the index instead, in batches that
+ * yield between them so a newer keystroke can supersede the scan and so the
+ * worker stays responsive on a multi-million-line document.
+ */
+async function handleSearch(req: Extract<WorkerRequest, { type: "search" }>): Promise<void> {
+  const token = ++searchSeq;
+  const doc = docs.get(req.docId);
+  if (!doc) throw new Error("Document not found.");
+
+  const empty = { matches: [] as FindMatch[], total: 0, truncated: false };
+  if (!req.query) {
+    post({ id: req.id, type: "search", ...empty, superseded: false });
+    return;
+  }
+
+  const { re, foldHaystack } = buildSearchRegex(req.query, req.options);
+  const matches: FindMatch[] = [];
+  let total = 0;
+  const lineCount = doc.index.lineCount;
+
+  for (let from = 0; from < lineCount; from += SEARCH_BATCH) {
+    if (token !== searchSeq) {
+      post({ id: req.id, type: "search", ...empty, superseded: true });
+      return;
+    }
+    if (snapshotting) await snapshotting;
+
+    const lines = doc.reader.lines(from, SEARCH_BATCH);
+    for (let i = 0; i < lines.length; i++) {
+      const raw = lines[i];
+      const hay = foldHaystack ? foldForSearch(raw) : raw;
+      re.lastIndex = 0;
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(hay)) !== null) {
+        // A pattern able to match nothing would spin forever otherwise.
+        if (m[0].length === 0) {
+          re.lastIndex++;
+          continue;
+        }
+        total++;
+        if (matches.length < MAX_MATCHES) {
+          matches.push({ line: from + i, col: m.index, len: m[0].length });
+        }
+      }
+    }
+    await yieldToLoop();
+  }
+
+  post({
+    id: req.id,
+    type: "search",
+    matches,
+    total,
+    truncated: total > matches.length,
+    superseded: false,
+  });
+}
+
 async function handle(req: WorkerRequest): Promise<void> {
   switch (req.type) {
     case "load":
@@ -257,6 +333,9 @@ async function handle(req: WorkerRequest): Promise<void> {
       });
       return;
     }
+    case "search":
+      await handleSearch(req);
+      return;
     case "snapshot": {
       const doc = docs.get(req.docId);
       if (!doc) throw new Error("Document not found.");

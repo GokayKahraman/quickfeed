@@ -1,5 +1,7 @@
 import type {
   DocSummary,
+  FindOptions,
+  FindResult,
   LoadProgress,
   Query,
   WorkerRequest,
@@ -95,6 +97,15 @@ export class FeedEngine {
       from,
       count,
     }).then((m) => m.lines);
+  }
+
+  search(docId: string, query: string, options: FindOptions): Promise<FindResult> {
+    return this.send<Extract<WorkerResponse, { type: "search" }>>({
+      type: "search",
+      docId,
+      query,
+      options,
+    });
   }
 
   snapshot(docId: string): Promise<{ blob: Blob; fileName: string }> {

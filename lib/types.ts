@@ -53,6 +53,28 @@ export interface DocSummary {
   truncated?: boolean;
 }
 
+export interface FindOptions {
+  caseSensitive: boolean;
+  wholeWord: boolean;
+  regex: boolean;
+}
+
+/** One hit, addressed the way the viewer draws text: line, column, length. */
+export interface FindMatch {
+  line: number;
+  col: number;
+  len: number;
+}
+
+export interface FindResult {
+  matches: FindMatch[];
+  /** Hits found in the whole document, even past the collection cap. */
+  total: number;
+  truncated: boolean;
+  /** True when a newer search replaced this one before it finished. */
+  superseded: boolean;
+}
+
 export interface LoadProgress {
   bytesRead: number;
   totalBytes: number | null;
@@ -73,6 +95,13 @@ export type WorkerRequest =
     }
   | { id: number; type: "lines"; docId: string; from: number; count: number }
   | { id: number; type: "query"; docId: string; query: Query; recordName?: string }
+  | {
+      id: number;
+      type: "search";
+      docId: string;
+      query: string;
+      options: FindOptions;
+    }
   | { id: number; type: "snapshot"; docId: string }
   | { id: number; type: "release"; docId: string }
   | { id: number; type: "cancel" };
@@ -81,6 +110,7 @@ export type WorkerResponse =
   | { id: number; type: "progress"; progress: LoadProgress }
   | { id: number; type: "doc"; doc: DocSummary }
   | { id: number; type: "lines"; from: number; lines: string[] }
+  | ({ id: number; type: "search" } & FindResult)
   | { id: number; type: "snapshot"; blob: Blob; fileName: string }
   | { id: number; type: "done" }
   | { id: number; type: "error"; message: string };

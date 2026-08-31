@@ -33,6 +33,24 @@ npm run dev
 *+ condition* ile koşul eklenir; koşullar arasındaki **AND / OR** bağlacına tıklayarak
 değiştirilir.
 
+## Belge içinde arama
+
+**Ctrl+F** (macOS'ta **Cmd+F**) görüntüleyicinin sağ üstünde bir arama kutusu açar.
+
+Tarayıcının kendi araması burada işe yaramaz: görüntüleyici sanallaştırılmış olduğu için
+DOM'da yalnızca ekrandaki ~30 satır bulunur, geri kalan 245 bin satırı bulamaz. Bu yüzden
+arama worker içinde, satır indeksi üzerinden belgenin tamamını tarar.
+
+- `Aa` büyük/küçük harf duyarlılığı, `ab` yalnızca tam kelime, `.*` düzenli ifade.
+- Kapalıyken Türkçe karakterler eşitlenir: `Yesil` yazınca `Yeşil` bulunur. Düzenli ifade
+  modunda eşitleme yapılmaz — desendeki `\S` gibi ifadeleri bozardı.
+- **Enter** sonraki, **Shift+Enter** önceki eşleşme; **Esc** kapatır. Aktif eşleşme dolu
+  kırmızı, diğerleri soluk kırmızı gösterilir ve satır ekranın ortasına getirilir.
+- Gezinme için en fazla 20.000 eşleşme tutulur; toplam sayı bunu aşarsa sayaç `+` ile
+  gösterilir.
+
+Ölçüm (245.000 satır / 16,7 MB): tam belge taraması ~1,7 sn, 15.588 eşleşme.
+
 ## Sorgu davranışı
 
 | Konu | Davranış |
@@ -123,7 +141,8 @@ components/
   Tape.tsx              belge haritası: kayıt yoğunluğu, eşleşmeler, görünen alan
   XmlViewer.tsx         sanallaştırılmış satır görüntüleyici
   TransformDemo.tsx     giriş ekranındaki önce/sonra gösterimi
-  highlight.ts          satır bazlı XML renklendirme
+  FindBar.tsx           belge içi arama kutusu
+  highlight.ts          satır bazlı XML renklendirme + eşleşme vurgusu
 lib/
   worker/feed.worker.ts tüm ağır iş
   xml/tokenizer.ts      parça sınırlarını aşabilen XML tokenizer
@@ -140,7 +159,6 @@ lib/
 - Kayıt etiketi otomatik bulunur ama bu bir tahmindir; yanlışsa sorgu barındaki **Record**
   kutusundan değiştirilir.
 - Sorgu öğe metinleri üzerinde çalışır; öznitelik (`<product id="1">`) sorgulanamaz.
-- Görüntüleyicide arama/atlama yoktur; konum değiştirmek için üstteki belge haritası kullanılır.
 - Arayüz tek dillidir (İngilizce); dil değiştirici yoktur.
 - Karma içerikte (`<p>metin <b>kalın</b> devam</p>`) metin parçaları kırpılarak ayrı
   satırlara alınır.
