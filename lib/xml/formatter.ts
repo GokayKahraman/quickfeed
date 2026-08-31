@@ -1,4 +1,5 @@
 import type { Token } from "./tokenizer";
+import type { FieldInfo } from "../types";
 
 export interface FormatOptions {
   /** Indent unit: 2 spaces, 4 spaces, or a tab. */
@@ -143,6 +144,8 @@ export interface NameStat {
   count: number;
   hasChildren: boolean;
   minDepth: number;
+  /** First parent this name was seen under; feeds are regular enough for one. */
+  parent: string | null;
 }
 
 const MAX_TRACKED_NAMES = 5000;
@@ -177,7 +180,12 @@ export class ShapeCollector {
         stat.count++;
         if (depth < stat.minDepth) stat.minDepth = depth;
       } else if (this.names.size < MAX_TRACKED_NAMES) {
-        this.names.set(tok.name, { count: 1, hasChildren: false, minDepth: depth });
+        this.names.set(tok.name, {
+          count: 1,
+          hasChildren: false,
+          minDepth: depth,
+          parent: depth > 0 ? this.stack[depth - 1] : null,
+        });
       }
       this.elementCount++;
       if (!tok.selfClose) {
@@ -190,24 +198,30 @@ export class ShapeCollector {
   }
 
   /**
-   * The record is the most frequent element that actually contains other
-   * elements — that rules out leaf fields like `<title>`, which are just as
-   * numerous, and it finds `<item>` in RSS where records sit under `<channel>`
-   * rather than directly under the root.
+   * How record-like an element is: how many times it repeats inside a single
+   * instance of its parent.
+   *
+   * Raw frequency is the wrong signal. In a Ticimax feed `<TeknikDetay>`
+   * appears 27,217 times to `<Urun>`'s 1,063, because every product carries
+   * about 26 of them — so counting alone picks the detail row over the
+   * product. Dividing by the parent's own count separates the two cleanly:
+   * `<Urun>` repeats 1,063 times inside the single `<Urunler>`, while
+   * `<TeknikDetay>` repeats only ~26 times inside each `<TeknikDetaylar>`.
+   */
+  private fanOut(s: NameStat): number {
+    const parentCount = s.parent ? (this.names.get(s.parent)?.count ?? 1) : 1;
+    return s.count / Math.max(1, parentCount);
+  }
+
+  /**
+   * Best guess at the record element: the container with the highest fan-out.
+   * Only ever a guess — the caller can override it.
    */
   recordName(): string | null {
+    const ranked = this.recordCandidates(1);
+    if (ranked.length > 0) return ranked[0].name;
     let best: string | null = null;
     let bestCount = 0;
-    let bestDepth = Infinity;
-    for (const [name, s] of this.names) {
-      if (name === this.rootName || !s.hasChildren || s.count < 2) continue;
-      if (s.count > bestCount || (s.count === bestCount && s.minDepth < bestDepth)) {
-        best = name;
-        bestCount = s.count;
-        bestDepth = s.minDepth;
-      }
-    }
-    if (best) return best;
     for (const [name, s] of this.names) {
       if (name === this.rootName) continue;
       if (s.count > bestCount) {
@@ -218,12 +232,43 @@ export class ShapeCollector {
     return best;
   }
 
+  /**
+   * Plausible record elements, best first. Containers rank above leaves,
+   * then by fan-out, then by shallowness.
+   */
+  recordCandidates(limit = 60): FieldInfo[] {
+    const out: (FieldInfo & { score: number })[] = [];
+    for (const [name, s] of this.names) {
+      if (name === this.rootName || s.count < 2) continue;
+      out.push({
+        name,
+        count: s.count,
+        depth: s.minDepth,
+        container: s.hasChildren,
+        score: this.fanOut(s),
+      });
+    }
+    out.sort(
+      (a, b) =>
+        Number(b.container) - Number(a.container) ||
+        b.score - a.score ||
+        a.depth - b.depth ||
+        a.name.localeCompare(b.name),
+    );
+    return out.slice(0, limit).map(({ name, count, depth, container }) => ({
+      name,
+      count,
+      depth,
+      container,
+    }));
+  }
+
   /** Field names for the query bar, most frequent first. */
-  fieldNames(limit = 400): { name: string; count: number }[] {
-    const out: { name: string; count: number }[] = [];
+  fieldNames(limit = 400): FieldInfo[] {
+    const out: FieldInfo[] = [];
     for (const [name, s] of this.names) {
       if (name === this.rootName) continue;
-      out.push({ name, count: s.count });
+      out.push({ name, count: s.count, depth: s.minDepth, container: s.hasChildren });
     }
     out.sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
     return out.slice(0, limit);

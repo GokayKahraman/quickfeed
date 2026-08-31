@@ -1,7 +1,7 @@
 "use client";
 
 import { useId } from "react";
-import type { Condition, DocSummary, Query, QueryOp } from "../lib/types";
+import type { Condition, DocSummary, FieldInfo, Query, QueryOp } from "../lib/types";
 import { OP_LABELS } from "../lib/types";
 import { formatCount, formatMs } from "../lib/engine";
 import { isUsable } from "../lib/xml/match";
@@ -12,10 +12,16 @@ interface Props {
   onApply: () => void;
   onClear: () => void;
   onDownloadResult: () => void;
-  fields: DocSummary["fields"];
+  fields: FieldInfo[];
   result: DocSummary | null;
   busy: boolean;
+  /** Record tag actually in use — the detected one unless overridden. */
   recordName: string | null;
+  /** What detection guessed, for the "not this one?" hint. */
+  recordAuto: string | null;
+  recordCandidates: FieldInfo[];
+  recordCount: number;
+  onRecordChange: (name: string) => void;
 }
 
 let seq = 0;
@@ -33,9 +39,21 @@ export default function QueryBar({
   result,
   busy,
   recordName,
+  recordAuto,
+  recordCandidates,
+  recordCount,
+  onRecordChange,
 }: Props) {
   const listId = useId();
   const usable = query.conditions.some(isUsable);
+  const overridden = !!recordName && !!recordAuto && recordName !== recordAuto;
+
+  // Detection can be wrong, so the chosen tag is always offered even when it
+  // did not make the candidate list.
+  const options =
+    recordName && !recordCandidates.some((c) => c.name === recordName)
+      ? [{ name: recordName, count: recordCount, depth: 0, container: true }, ...recordCandidates]
+      : recordCandidates;
 
   const update = (id: string, patch: Partial<Condition>) =>
     onChange({
@@ -56,12 +74,42 @@ export default function QueryBar({
         ))}
       </datalist>
 
+      <div className="record-row">
+        <span className="opt-label">Record</span>
+        <select
+          className="record-select"
+          value={recordName ?? ""}
+          onChange={(e) => onRecordChange(e.target.value)}
+          aria-label="Record tag"
+          title="The tag that wraps one record. Change it if the wrong one was detected."
+        >
+          {options.length === 0 && <option value="">no repeating tag found</option>}
+          {options.map((c) => (
+            <option key={c.name} value={c.name}>
+              {c.name} — {formatCount(c.count)}
+            </option>
+          ))}
+        </select>
+        <span className="record-note">
+          {overridden ? (
+            <>
+              you picked this · detected <code>&lt;{recordAuto}&gt;</code>{" "}
+              <button type="button" onClick={() => onRecordChange(recordAuto!)}>
+                undo
+              </button>
+            </>
+          ) : (
+            "detected automatically — switch it if queries return nothing"
+          )}
+        </span>
+      </div>
+
       <div className="query-rows">
         {query.conditions.map((c, i) => (
           <div className="cond" key={c.id}>
             <span className="cond-join">
               {i === 0 ? (
-                recordName ? `<${recordName}>` : "record"
+                "where"
               ) : (
                 <button
                   type="button"

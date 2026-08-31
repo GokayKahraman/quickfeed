@@ -31,6 +31,8 @@ export default function Page() {
     caseSensitive: false,
   }));
   const [viewport, setViewport] = useState({ first: 0, visible: 0 });
+  /** Set when the user rejects the auto-detected record tag. */
+  const [recordOverride, setRecordOverride] = useState<string | null>(null);
 
   useEffect(() => {
     const engine = new FeedEngine();
@@ -58,6 +60,7 @@ export default function Page() {
       setProgress(null);
       setResult(null);
       setActiveKind("source");
+      setRecordOverride(null);
       try {
         const doc = await engine.load(source_, { indent, collapseText }, setProgress);
         setSource(doc);
@@ -73,13 +76,30 @@ export default function Page() {
     [indent, collapseText],
   );
 
+  /* The record tag drives the query, the rail count and the tape, so it is
+     resolved once here rather than in each of them. */
+  const effectiveRecord = recordOverride ?? source?.recordName ?? null;
+  const recordInfo = source?.fields.find((f) => f.name === effectiveRecord) ?? null;
+
+  const changeRecord = useCallback(
+    (name: string) => {
+      setRecordOverride(name);
+      // The old result was filtered on a different tag; it no longer applies.
+      const engine = engineRef.current;
+      if (engine && result) void engine.release(result.id);
+      setResult(null);
+      setActiveKind("source");
+    },
+    [result],
+  );
+
   const applyQuery = useCallback(async () => {
     const engine = engineRef.current;
     if (!engine || !source) return;
     setBusy(true);
     setError(null);
     try {
-      const doc = await engine.query(source.id, query, setProgress);
+      const doc = await engine.query(source.id, query, effectiveRecord, setProgress);
       setResult(doc);
       setActiveKind("result");
     } catch (err) {
@@ -88,7 +108,7 @@ export default function Page() {
       setBusy(false);
       setProgress(null);
     }
-  }, [source, query]);
+  }, [source, query, effectiveRecord]);
 
   const clearQuery = useCallback(() => {
     const engine = engineRef.current;
@@ -113,6 +133,7 @@ export default function Page() {
     setResult(null);
     setPhase("intake");
     setError(null);
+    setRecordOverride(null);
     setQuery({ conditions: [newCondition()], combinator: "AND", caseSensitive: false });
   }, []);
 
@@ -122,6 +143,20 @@ export default function Page() {
     if (!result) return undefined;
     return activeKind === "source" ? result.matchHistogram : undefined;
   }, [result, activeKind]);
+
+  /* Density is captured per nesting level during the format pass, so switching
+     the record tag re-points the tape instead of leaving it showing the wrong
+     element. Levels deeper than 4 were not captured; the tape keeps its
+     original curve there. */
+  const tapeHistogram = useMemo(() => {
+    if (!source) return [];
+    if (activeKind === "result" && result) return result.histogram;
+    const depth = recordInfo?.depth ?? -1;
+    if (depth >= 1 && depth <= 4 && source.depthHistograms[depth - 1]) {
+      return source.depthHistograms[depth - 1];
+    }
+    return source.histogram;
+  }, [source, result, activeKind, recordInfo]);
 
   /* ---------------------------------------------------------------- intake */
 
@@ -191,7 +226,9 @@ export default function Page() {
                 <dt>records</dt>
                 <dd className="accent">
                   {formatCount(source.recordCount)}
-                  {source.recordName && <em> &lt;{source.recordName}&gt;</em>}
+                  {source.recordName && (
+                    <em> &lt;{source.recordName}&gt; · change it in the query bar</em>
+                  )}
                 </dd>
               </div>
               <div>
@@ -274,8 +311,12 @@ export default function Page() {
             <span className="fact-v">{formatCount(doc.lineCount)}</span>
           </span>
           <span className="fact">
-            <span className="fact-k">{doc.recordName ? `<${doc.recordName}>` : "records"}</span>
-            <span className="fact-v accent">{formatCount(doc.recordCount)}</span>
+            <span className="fact-k">{effectiveRecord ? `<${effectiveRecord}>` : "records"}</span>
+            <span className="fact-v accent">
+              {formatCount(
+                activeKind === "result" ? doc.recordCount : (recordInfo?.count ?? doc.recordCount),
+              )}
+            </span>
           </span>
         </div>
 
@@ -297,7 +338,11 @@ export default function Page() {
         fields={source.fields}
         result={result}
         busy={busy}
-        recordName={source.recordName}
+        recordName={effectiveRecord}
+        recordAuto={source.recordAuto}
+        recordCandidates={source.recordCandidates}
+        recordCount={recordInfo?.count ?? 0}
+        onRecordChange={changeRecord}
       />
 
       {queryProgress && (
@@ -307,12 +352,12 @@ export default function Page() {
       )}
 
       <Tape
-        histogram={doc.histogram}
+        histogram={tapeHistogram}
         matchHistogram={tapeMatches}
         lineCount={doc.lineCount}
         firstLine={viewport.first}
         visibleLines={viewport.visible}
-        recordName={doc.recordName}
+        recordName={effectiveRecord}
         onSeek={(line) => viewerApi.current?.scrollToLine(line)}
       />
 

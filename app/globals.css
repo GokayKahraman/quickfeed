@@ -701,6 +701,36 @@ select {
   flex-direction: column;
   gap: 9px;
 }
+/* Record picker: detection is a guess, so correcting it has to be one click
+   away rather than buried in a settings panel. */
+.record-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding-bottom: 9px;
+  margin-bottom: 2px;
+  border-bottom: 1px solid var(--line-soft);
+}
+.record-select {
+  min-width: 190px;
+  color: var(--cyan);
+}
+.record-note {
+  font-size: 11.5px;
+  color: var(--faint);
+}
+.record-note code {
+  font-family: var(--mono);
+  color: var(--cyan);
+}
+.record-note button {
+  font-size: 11.5px;
+  color: var(--signal);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
 .query-rows {
   display: flex;
   flex-direction: column;
@@ -977,6 +1007,13 @@ select {
   }
   .query-actions {
     padding-left: 0;
+  }
+  .record-select {
+    flex: 1;
+    min-width: 0;
+  }
+  .record-note {
+    flex-basis: 100%;
   }
   .row .no {
     width: 56px;

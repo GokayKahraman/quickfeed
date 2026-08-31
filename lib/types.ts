@@ -16,6 +16,10 @@ export interface Query {
 export interface FieldInfo {
   name: string;
   count: number;
+  /** Shallowest nesting level the tag was seen at; the root sits at 0. */
+  depth: number;
+  /** True when the tag holds other elements rather than plain text. */
+  container: boolean;
 }
 
 export interface DocSummary {
@@ -29,9 +33,15 @@ export interface DocSummary {
   rootName: string | null;
   recordName: string | null;
   recordCount: number;
+  /** Detected record tag; the user can override it per query. */
+  recordAuto: string | null;
+  /** Tags that could plausibly be the record, best guess first. */
+  recordCandidates: FieldInfo[];
   fields: FieldInfo[];
   /** 512-bucket record density across the document, for the tape. */
   histogram: number[];
+  /** Density per nesting level 1..4, so an overridden record tag still maps. */
+  depthHistograms: number[][];
   /** True when bytes live in OPFS rather than RAM. */
   persistent: boolean;
   elapsedMs: number;
@@ -62,7 +72,7 @@ export type WorkerRequest =
       collapseText: boolean;
     }
   | { id: number; type: "lines"; docId: string; from: number; count: number }
-  | { id: number; type: "query"; docId: string; query: Query }
+  | { id: number; type: "query"; docId: string; query: Query; recordName?: string }
   | { id: number; type: "snapshot"; docId: string }
   | { id: number; type: "release"; docId: string }
   | { id: number; type: "cancel" };

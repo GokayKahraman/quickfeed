@@ -141,9 +141,8 @@ async function handleLoad(req: Extract<WorkerRequest, { type: "load" }>): Promis
   const recordName = shape.recordName();
   const stat = recordName ? shape.names.get(recordName) : null;
   const depth = stat ? stat.minDepth : 1;
-  const histogram = (
-    depth >= 1 && depth <= 4 ? depthHistograms[depth - 1] : depthHistograms[0]
-  ).finalize(index.lineCount);
+  const byDepth = depthHistograms.map((h) => h.finalize(index.lineCount));
+  const histogram = depth >= 1 && depth <= 4 ? byDepth[depth - 1] : byDepth[0];
 
   const summary: DocSummary = {
     id,
@@ -155,8 +154,11 @@ async function handleLoad(req: Extract<WorkerRequest, { type: "load" }>): Promis
     rootName: shape.rootName,
     recordName,
     recordCount: stat ? stat.count : 0,
+    recordAuto: recordName,
+    recordCandidates: shape.recordCandidates(),
     fields: shape.fieldNames(),
     histogram,
+    depthHistograms: byDepth,
     persistent: store.persistent,
     elapsedMs: Math.round(performance.now() - started),
     sourceBytes: result.bytesRead,
@@ -169,8 +171,10 @@ async function handleLoad(req: Extract<WorkerRequest, { type: "load" }>): Promis
 async function handleQuery(req: Extract<WorkerRequest, { type: "query" }>): Promise<void> {
   const src = docs.get(req.docId);
   if (!src) throw new Error("Source document not found.");
-  if (!src.summary.recordName) {
-    throw new Error("No repeating record tag was found in this document, so it cannot be filtered.");
+  // The detected record tag is only a guess; the user can name a different one.
+  const recordName = req.recordName?.trim() || src.summary.recordName;
+  if (!recordName) {
+    throw new Error("No repeating record tag was found in this document. Pick one in the Record box.");
   }
 
   // One result at a time; the previous one is dropped before a new one starts.
@@ -190,7 +194,7 @@ async function handleQuery(req: Extract<WorkerRequest, { type: "query" }>): Prom
   try {
     result = await runQuery({
       source: src.store,
-      recordName: src.summary.recordName,
+      recordName,
       query: req.query,
       format: { indent: "    ", collapseText: false },
       out: writer,
@@ -212,10 +216,13 @@ async function handleQuery(req: Extract<WorkerRequest, { type: "query" }>): Prom
     byteLength: index.byteLength,
     lineCount: index.lineCount,
     rootName: src.summary.rootName,
-    recordName: src.summary.recordName,
+    recordName,
+    recordAuto: src.summary.recordAuto,
+    recordCandidates: src.summary.recordCandidates,
     recordCount: result.matched,
     fields: src.summary.fields,
     histogram: result.resultHistogram.finalize(index.lineCount),
+    depthHistograms: [],
     persistent: store.persistent,
     elapsedMs: Math.round(performance.now() - started),
     query: req.query,

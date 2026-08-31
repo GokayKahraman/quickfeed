@@ -79,10 +79,11 @@ export class FeedEngine {
   query(
     docId: string,
     query: Query,
+    recordName: string | null,
     onProgress: (p: LoadProgress) => void,
   ): Promise<DocSummary> {
     return this.send<Extract<WorkerResponse, { type: "doc" }>>(
-      { type: "query", docId, query },
+      { type: "query", docId, query, recordName: recordName ?? undefined },
       onProgress,
     ).then((m) => m.doc);
   }

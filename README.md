@@ -41,10 +41,26 @@ değiştirilir.
 | Ön ek | `g:price` ile `price` aynı etiket sayılır. |
 | Kapsayıcı etiket | `kategori` gibi alt öğe barındıran etiketler alt metinlerini kapsar; `kategori contains Gömlek`, `<alt>Gömlek</alt>` olan kaydı bulur. |
 | Kayıt etiketi | Kayıt etiketinin kendisi (`product`, `item`) tüm kayıt içinde tam metin araması yapar. |
+| Yanlış kayıt etiketi | Sorgu barındaki **Record** kutusundan elle seçilir; sonuç ve sayaçlar seçilen etikete göre yeniden hesaplanır. |
 | Etiket yoksa | `does not contain` doğru, `contains` ve `matches exactly` yanlış kabul edilir. |
 
 Sonuç dosyası geçerli bir XML'dir: kök etiket, XML bildirimi ve `<channel>` gibi ara
 katmanlar korunur, yalnızca eşleşmeyen kayıtlar çıkarılır.
+
+## Kayıt etiketi tespiti
+
+Filtreleme, beslemedeki "bir kayıt"ın hangi etiket olduğunu bilmeyi gerektirir. Bu etiket
+**ebeveyni başına kaç kez tekrarlandığına** göre seçilir — ham tekrar sayısına göre değil.
+
+Fark önemli. Bir Ticimax beslemesinde `<TeknikDetay>` 27.217 kez, `<Urun>` ise 1.063 kez
+geçiyor; ham sayıya bakan bir yöntem teknik detay satırını ürün zanneder. Oysa `<Urun>`
+tek bir `<Urunler>` içinde 1.063 kez tekrarlanırken `<TeknikDetay>` her `<TeknikDetaylar>`
+içinde yalnızca ~26 kez tekrarlanıyor. Kayıt, tek bir kapsayıcının altında binlerce kez
+tekrarlanan şeydir.
+
+Yine de bu bir tahmin. Sorgu barındaki **Record** açılır kutusu tespit edilen etiketi
+gösterir ve aday etiketleri sıralar; yanlışsa oradan değiştirilir. Değiştirince kayıt
+sayacı, belge haritası yoğunluğu ve sonraki sorgular seçilen etikete göre çalışır.
 
 ## Büyük dosyalar
 
@@ -121,8 +137,8 @@ lib/
 
 ## Bilinen sınırlar
 
-- Kayıt etiketi, alt öğe içeren en sık geçen etiket olarak belirlenir. Beslemede yinelenen
-  bir kayıt etiketi yoksa sorgulama çalışmaz.
+- Kayıt etiketi otomatik bulunur ama bu bir tahmindir; yanlışsa sorgu barındaki **Record**
+  kutusundan değiştirilir.
 - Sorgu öğe metinleri üzerinde çalışır; öznitelik (`<product id="1">`) sorgulanamaz.
 - Görüntüleyicide arama/atlama yoktur; konum değiştirmek için üstteki belge haritası kullanılır.
 - Arayüz tek dillidir (İngilizce); dil değiştirici yoktur.
