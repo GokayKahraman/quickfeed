@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { LoadProgress } from "../lib/types";
 import { formatBytes, formatCount } from "../lib/engine";
 import TransformDemo from "./TransformDemo";
@@ -36,11 +36,32 @@ export default function Intake({
   onUrl,
   onCancel,
 }: Props) {
-  const [mode, setMode] = useState<"file" | "url">("file");
+  const [mode, setMode] = useState<"file" | "url">("url");
   const [url, setUrl] = useState("");
-  const [viaProxy, setViaProxy] = useState(false);
+  const [viaProxy, setViaProxy] = useState(true);
   const [over, setOver] = useState(false);
   const fileInput = useRef<HTMLInputElement | null>(null);
+  const fetchBtn = useRef<HTMLButtonElement | null>(null);
+
+  useEffect(() => {
+    const feedlink = new URLSearchParams(window.location.search).get("feedlink")?.trim() ?? "";
+    if (feedlink) {
+      setMode("url");
+      setUrl(feedlink);
+    }
+  }, []);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const feedlink = params.get("feedlink")?.trim() ?? "";
+    if (!feedlink || params.get("fetch") !== "true") return;
+    if (url.trim() !== feedlink) return;
+
+    const timer = window.setTimeout(() => {
+      fetchBtn.current?.click();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [url]);
 
   const pct =
     progress && progress.totalBytes
@@ -193,6 +214,7 @@ export default function Intake({
                 </label>
                 <span style={{ flex: 1 }} />
                 <button
+                  ref={fetchBtn}
                   type="button"
                   className="btn primary lg"
                   disabled={!url.trim()}
