@@ -214,6 +214,7 @@ button {
 
 input[type="text"],
 input[type="url"],
+input[type="password"],
 select {
   font-family: var(--mono);
   font-size: 13px;
@@ -497,12 +498,63 @@ select {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  height: 168px;
+  /* Was a fixed height, back when the row never grew. The sign-in fields open
+     underneath it, so this is a floor now, not a ceiling. */
+  min-height: 168px;
 }
 /* Scoped to the address field: an unqualified `input` here would also hit the
    proxy checkbox and stretch the toggle switch out of shape. */
 .url-row input[type="url"] {
   height: 38px;
+}
+
+/* Username and password, side by side and equal — neither is the main one. */
+.auth-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.auth-row input[type="text"],
+.auth-row input[type="password"] {
+  height: 34px;
+  width: 100%;
+}
+
+.auth-reveal {
+  position: relative;
+  display: block;
+}
+/* The reveal sits inside the field, so the padding has to clear it. */
+.auth-reveal input {
+  padding-right: 52px;
+}
+.auth-reveal button {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  height: 24px;
+  padding: 0 8px;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--dim);
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  transition: color 0.14s, border-color 0.14s;
+}
+.auth-reveal button:hover {
+  color: var(--paper);
+  border-color: var(--line-strong);
+}
+
+.auth-note {
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--faint);
 }
 
 .opts {

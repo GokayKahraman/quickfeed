@@ -29,6 +29,19 @@ export interface Query {
   caseSensitive: boolean;
 }
 
+/**
+ * HTTP Basic credentials for a protected feed.
+ *
+ * Held in memory for the length of one fetch and never persisted: not in
+ * localStorage, not in the URL, not in the shareable `feedlink` link. A feed
+ * password in a query string ends up in browser history and in every access
+ * log between here and the host.
+ */
+export interface Credentials {
+  username: string;
+  password: string;
+}
+
 export interface FieldInfo {
   name: string;
   count: number;
@@ -113,7 +126,12 @@ export type WorkerRequest =
       type: "load";
       source:
         | { kind: "file"; file: File }
-        | { kind: "url"; url: string; viaProxy: boolean };
+        | {
+            kind: "url";
+            url: string;
+            viaProxy: boolean;
+            credentials?: Credentials;
+          };
       indent: string;
       collapseText: boolean;
     }

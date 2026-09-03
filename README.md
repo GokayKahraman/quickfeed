@@ -192,6 +192,33 @@ Tarayıcı önce adresi doğrudan okumayı dener. Hedef site CORS başlığı g�
 tamponlamaz ve saklamaz** — yanıt gövdesini olduğu gibi tarayıcıya aktarır. Yerel ağ ve
 loopback adresleri DNS çözümlemesi sonrası engellenir.
 
+## Şifreli beslemeler
+
+Kullanıcı adı ve şifre isteyen beslemeler için **This feed needs a sign-in** seçeneği iki
+alan açar. Kimlik **HTTP Basic** olarak gönderilir; beslemelerin neredeyse tamamının
+kullandığı şema budur. Sunucu Digest ya da başka bir şema istiyorsa `WWW-Authenticate`
+başlığından okunur ve şifreyi yeniden yazdırmak yerine bunun desteklenmediği söylenir.
+
+Adres `https://kullanıcı:şifre@host/feed.xml` biçiminde yapıştırılırsa — besleme
+sağlayıcıları adresi genelde böyle verir — kimlik alanlara taşınır ve adres kutusundan
+silinir. `fetch` zaten adres içindeki kimliği kabul etmez; ayrıca şifrenin ekranda açıkta
+duran ve kopyalanıp paylaşılan kutuda kalmasının anlamı yok.
+
+Seçenek açıldığında proxy de açılır. Şifreyi doğrudan tarayıcıdan göndermek, hedef sitenin
+`Authorization` başlığını CORS'ta izin vermesini gerektirir ve besleme sunucuları bunu
+neredeyse hiç yapmaz. Proxy çalışan yoldur; anahtar yine de bir düğme, kapatılabilir.
+
+**Kimlik nereye gitmez:** sorgu dizesine (`?url=…`) girmez — oraya yazılan bir şifre
+tarayıcı geçmişine, `Referer` başlığına ve aradaki her erişim kaydına düşerdi. Bunun yerine
+aynı origin'e giden bir istek başlığıyla (`x-feed-authorization`) taşınır, proxy bunu
+yalnızca hedef sunucuya `Authorization` olarak iletir. Yönlendirme başka bir origin'e
+çıkarsa `fetch` başlığı kendisi düşürür, yani bir sitenin şifresi başka bir siteye gitmez.
+Kimlik hiçbir yere yazılmaz: `localStorage` yok, adres çubuğu yok, paylaşılabilir
+`feedlink` bağlantısında yok, sunucu tarafında kayıt yok. Sekme kapandığında gider.
+
+Bir 401 kimlik girilmeden alınırsa alanlar kendiliğinden açılır — o yanıtla yapılabilecek
+tek yararlı şey bu.
+
 ## Vercel'e dağıtım
 
 Repoyu Vercel'de import etmek yeterli — framework Next.js olarak algılanır, ortam
@@ -262,3 +289,5 @@ lib/
   adsız bir sütun sorgulanamayacağı için gerekli, ama indirilen dosyaya da yansır.
 - JSON sonucu her zaman bir dizidir; kayıtları saran `{"meta":…}` gibi bir kabuk korunmaz.
 - Sayısal karşılaştırma yoktur; `price > 100` yazılamaz, koşullar metin üzerinde çalışır.
+- Kimlik doğrulamada yalnızca HTTP Basic desteklenir; Digest, NTLM ve OAuth yoktur. Şifre
+  hiçbir yerde saklanmadığı için her oturumda yeniden girilir.
