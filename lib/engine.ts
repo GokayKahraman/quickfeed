@@ -1,5 +1,6 @@
 import type {
   DocSummary,
+  FeedFormat,
   FindOptions,
   FindResult,
   LoadProgress,
@@ -127,6 +128,27 @@ export class FeedEngine {
     this.worker.terminate();
     this.pending.clear();
   }
+}
+
+/**
+ * How to name the thing a record is, in the vocabulary of its own format.
+ *
+ * An XML feed has `<product>` tags, a JSON feed has `products` keys, and a
+ * table just has rows — writing angle brackets around all three would be
+ * wrong twice over.
+ */
+export function recordLabel(format: FeedFormat, name: string | null): string {
+  if (!name) return "records";
+  if (format === "xml") return `<${name}>`;
+  if (format === "csv") return "rows";
+  return name;
+}
+
+/** The word for one field of a record, for placeholders and prompts. */
+export function fieldWord(format: FeedFormat): string {
+  if (format === "xml") return "tag";
+  if (format === "csv") return "column";
+  return "key";
 }
 
 export function formatBytes(n: number): string {

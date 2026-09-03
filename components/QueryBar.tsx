@@ -1,9 +1,16 @@
 "use client";
 
 import { useId } from "react";
-import type { Condition, DocSummary, FieldInfo, Query, QueryOp } from "../lib/types";
+import type {
+  Condition,
+  DocSummary,
+  FeedFormat,
+  FieldInfo,
+  Query,
+  QueryOp,
+} from "../lib/types";
 import { OP_LABELS } from "../lib/types";
-import { formatCount, formatMs } from "../lib/engine";
+import { fieldWord, formatCount, formatMs } from "../lib/engine";
 import { isUsable } from "../lib/xml/match";
 
 interface Props {
@@ -22,6 +29,7 @@ interface Props {
   recordCandidates: FieldInfo[];
   recordCount: number;
   onRecordChange: (name: string) => void;
+  format: FeedFormat;
 }
 
 let seq = 0;
@@ -43,8 +51,13 @@ export default function QueryBar({
   recordCandidates,
   recordCount,
   onRecordChange,
+  format,
 }: Props) {
   const listId = useId();
+  const noun = fieldWord(format);
+  // A table has exactly one thing a record could be — the row — so there is
+  // nothing to choose and the picker would only be noise.
+  const showRecordPicker = format !== "csv";
   const usable = query.conditions.some(isUsable);
   const overridden = !!recordName && !!recordAuto && recordName !== recordAuto;
 
@@ -74,6 +87,7 @@ export default function QueryBar({
         ))}
       </datalist>
 
+      {showRecordPicker && (
       <div className="record-row">
         <span className="opt-label">Record</span>
         <select
@@ -93,7 +107,8 @@ export default function QueryBar({
         <span className="record-note">
           {overridden ? (
             <>
-              you picked this · detected <code>&lt;{recordAuto}&gt;</code>{" "}
+              you picked this · detected{" "}
+              <code>{format === "xml" ? `<${recordAuto}>` : recordAuto}</code>{" "}
               <button type="button" onClick={() => onRecordChange(recordAuto!)}>
                 undo
               </button>
@@ -103,6 +118,7 @@ export default function QueryBar({
           )}
         </span>
       </div>
+      )}
 
       <div className="query-rows">
         {query.conditions.map((c, i) => (
@@ -128,12 +144,12 @@ export default function QueryBar({
               className="tag"
               type="text"
               list={listId}
-              placeholder="tag name"
+              placeholder={`${noun} name`}
               value={c.tag}
               spellCheck={false}
               onChange={(e) => update(c.id, { tag: e.target.value })}
               onKeyDown={(e) => e.key === "Enter" && usable && !busy && onApply()}
-              aria-label="Tag name"
+              aria-label={`${noun} name`}
             />
 
             <select

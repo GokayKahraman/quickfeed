@@ -5,8 +5,16 @@ import Intake from "../components/Intake";
 import FindBar from "../components/FindBar";
 import QueryBar, { newCondition } from "../components/QueryBar";
 import Tape from "../components/Tape";
-import XmlViewer, { type ViewerApi } from "../components/XmlViewer";
-import { FeedEngine, formatBytes, formatCount, formatMs, triggerDownload } from "../lib/engine";
+import DocViewer, { type ViewerApi } from "../components/DocViewer";
+import {
+  FeedEngine,
+  formatBytes,
+  formatCount,
+  formatMs,
+  recordLabel,
+  triggerDownload,
+} from "../lib/engine";
+import { formatLabel } from "../lib/format/detect";
 import type { DocSummary, FindMatch, FindOptions, LoadProgress, Query } from "../lib/types";
 
 type Phase = "intake" | "ready" | "viewing";
@@ -333,13 +341,26 @@ export default function Page() {
                 <dd className="accent">
                   {formatCount(source.recordCount)}
                   {source.recordName && (
-                    <em> &lt;{source.recordName}&gt; · change it in the query bar</em>
+                    <em>
+                      {" "}
+                      {recordLabel(source.format, source.recordName)}
+                      {source.format !== "csv" && " · change it in the query bar"}
+                    </em>
                   )}
                 </dd>
               </div>
               <div>
-                <dt>root tag</dt>
-                <dd>{source.rootName ? `<${source.rootName}>` : "—"}</dd>
+                <dt>{source.format === "xml" ? "root tag" : "format"}</dt>
+                <dd>
+                  {source.format === "xml"
+                    ? source.rootName
+                      ? `<${source.rootName}>`
+                      : "—"
+                    : formatLabel(source.format, source.delimiter)}
+                  {source.format === "csv" && source.columns && (
+                    <em> {source.columns.length} columns</em>
+                  )}
+                </dd>
               </div>
               <div>
                 <dt>time</dt>
@@ -417,7 +438,7 @@ export default function Page() {
             <span className="fact-v">{formatCount(doc.lineCount)}</span>
           </span>
           <span className="fact">
-            <span className="fact-k">{effectiveRecord ? `<${effectiveRecord}>` : "records"}</span>
+            <span className="fact-k">{recordLabel(doc.format, effectiveRecord)}</span>
             <span className="fact-v accent">
               {formatCount(
                 activeKind === "result" ? doc.recordCount : (recordInfo?.count ?? doc.recordCount),
@@ -449,6 +470,7 @@ export default function Page() {
         recordCandidates={source.recordCandidates}
         recordCount={recordInfo?.count ?? 0}
         onRecordChange={changeRecord}
+        format={source.format}
       />
 
       {queryProgress && (
@@ -464,6 +486,7 @@ export default function Page() {
         firstLine={viewport.first}
         visibleLines={viewport.visible}
         recordName={effectiveRecord}
+        format={source.format}
         onSeek={(line) => viewerApi.current?.scrollToLine(line)}
       />
 
@@ -483,7 +506,7 @@ export default function Page() {
             onClose={closeFind}
           />
         )}
-        <XmlViewer
+        <DocViewer
           engine={engineRef.current!}
           docId={doc.id}
           lineCount={doc.lineCount}
@@ -491,9 +514,14 @@ export default function Page() {
           onViewport={onViewport}
           hits={hits}
           currentHit={currentHit}
+          format={doc.format}
+          delimiter={doc.delimiter}
+          columns={doc.columns}
           emptyMessage={{
             title: "No matching records",
-            detail: "Loosen the condition, or check the tag name.",
+            detail: `Loosen the condition, or check the ${
+              doc.format === "csv" ? "column" : doc.format === "json" ? "key" : "tag"
+            } name.`,
           }}
         />
       </div>

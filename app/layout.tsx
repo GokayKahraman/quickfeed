@@ -2,9 +2,9 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "QuickFeed — XML feed formatter",
+  title: "QuickFeed — product feed formatter",
   description:
-    "Format, read and query large XML feeds in the browser with tag-based filters. The file never leaves your computer.",
+    "Format, read and filter large XML, JSON and CSV product feeds in the browser. The file never leaves your computer.",
 };
 
 export const viewport: Viewport = {

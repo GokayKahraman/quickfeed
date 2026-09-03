@@ -65,7 +65,8 @@ export async function GET(request: Request): Promise<Response> {
     upstream = await fetch(target, {
       redirect: "follow",
       headers: {
-        accept: "application/xml, text/xml, application/rss+xml, */*",
+        accept:
+          "application/json, text/csv, text/tab-separated-values, application/xml, text/xml, application/rss+xml, text/plain, */*",
         "user-agent": "QuickFeed/0.1 (feed formatter)",
       },
     });
@@ -81,7 +82,7 @@ export async function GET(request: Request): Promise<Response> {
   return new Response(upstream.body, {
     status: 200,
     headers: {
-      "content-type": upstream.headers.get("content-type") ?? "application/xml",
+      "content-type": upstream.headers.get("content-type") ?? "application/octet-stream",
       "cache-control": "no-store",
     },
   });
