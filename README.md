@@ -75,6 +75,31 @@ satırıdır.** Biçimlendirme geçişinin hücrelerdeki satır sonlarını boş
 sebebi tam olarak budur — tırnak içindeki bir açıklama kaydı iki satıra bölseydi
 sonraki bütün satır numaraları kayardı.
 
+### Sütun genişliği ve kesilen hücreler
+
+Sütun genişlikleri dosyadan ölçülür ama son söz kullanıcınındır:
+
+- **Sürükleyerek genişletin/daraltın.** Cetvelde her sütunun sağ kenarında bir tutamak
+  var; sürüklendiğinde hem cetvel hem satırlar birlikte hareket eder. Alt sınır 3, üst
+  sınır 400 karakter.
+- **Çift tıklayınca** sütun ölçülen genişliğine döner.
+- Genişlikler **görünüm tercihidir**: belgeye yazılmaz, sorgu sonucuna ya da indirilen
+  dosyaya taşınmaz, başka bir belge açılınca sıfırlanır.
+
+Sığmayan hücre yine `…` ile kesilir, ama artık **üzerine tıklanınca değerin tamamı** bir
+panelde açılır: sütun adı, karakter sayısı, kopyalama düğmesi ve satır sonlarını koruyan,
+seçilebilir bir metin alanı. `Esc`, panel dışına tıklama ya da kaydırma paneli kapatır.
+
+Panel açılıyor, satır açılmıyor — çünkü buradaki her satır tam olarak bir satır
+yüksekliğinde ve indeksine göre konumlanıyor; kırk milyon satırın kayabilmesinin sebebi
+bu. Altı satıra saran bir açıklama o düzenin içine sığmaz.
+
+Kesilme testi karakter sayısıyla yapılır (yazı tipi eşit aralıklı olduğu için bir karakter
+bir sütun genişliğidir), hücre hücre ölçüm yapılmaz — otuz satır çarpı yirmi sütun ölçmek
+her kaydırmada bir kare maliyeti demek olurdu. Hücrenin sağ dolgusu `border-box` yüzünden
+metin alanından düşüldüğü için, bir karakterin piksel genişliği bir kez ölçülüp eşiğe
+katılır; yoksa tam sınırdaki hücreler `…` gösterip tıklamaya cevap vermezdi.
+
 ## Belge içinde arama
 
 **Ctrl+F** (macOS'ta **Cmd+F**) görüntüleyicinin sağ üstünde bir arama kutusu açar.
@@ -325,7 +350,11 @@ lib/
 - Karma içerikte (`<p>metin <b>kalın</b> devam</p>`) metin parçaları kırpılarak ayrı
   satırlara alınır.
 - Tabloda hücre içindeki satır sonları boşluğa çevrilir — bir kaydın tek satırda kalması
-  gerektiği için zorunlu, ama içeriği değiştiren tek işlem budur.
+  gerektiği için zorunlu, ama içeriği değiştiren tek işlem budur. (Hücrenin özgün hâli
+  kesilmiş hücreye tıklanınca açılan panelde görülebilir.)
+- Kesilmiş bir hücre yalnızca fareyle açılır; klavyeyle gezilebilir bir düğme yapılsaydı
+  ekrandaki her satır için sekme durağı eklenirdi. Değerin tamamı `title` ipucunda da
+  duruyor.
 - Boş ya da tekrar eden sütun başlıkları yeniden adlandırılır (`column_21`, `price_2`);
   adsız bir sütun sorgulanamayacağı için gerekli, ama indirilen dosyaya da yansır.
 - JSON sonucu her zaman bir dizidir; kayıtları saran `{"meta":…}` gibi bir kabuk korunmaz.

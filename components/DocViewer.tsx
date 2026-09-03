@@ -35,6 +35,13 @@ const WINDOW = 256;
 const CACHE_MAX = 64;
 /** Width used for a cell the header never named. */
 const ORPHAN_COL_WIDTH = 14;
+/** How narrow and how wide a column may be dragged, in characters. */
+const MIN_COL_WIDTH = 3;
+const MAX_COL_WIDTH = 400;
+/** `.cell`'s right padding. Boxes are border-box, so it comes off the text. */
+const CELL_PAD_PX = 12;
+/** Characters the probe is set to, for a measurement that averages rounding. */
+const PROBE_CH = 20;
 /** Line-number gutter plus the row's left padding. */
 const GUTTER_PX = 92;
 /** Breathing room after the last column, matching `.row .cells`. */
@@ -47,6 +54,19 @@ const ROW_END_PAD = 32;
 const MAX_SCROLL_PX = 8_000_000;
 
 type LineHit = { col: number; len: number; current: boolean };
+
+/** A cell opened for reading in full, with where on screen it was. */
+type InspectedCell = {
+  column: string;
+  text: string;
+  /** Viewport coordinates of the cell that was clicked. */
+  left: number;
+  top: number;
+  bottom: number;
+};
+
+/** Drag in progress on a column edge. */
+type ColDrag = { index: number; startX: number; startWidth: number; pxPerCh: number };
 
 /** First index whose line is >= `line`. */
 function lowerBound(hits: FindMatch[], line: number): number {
@@ -167,7 +187,134 @@ export default function DocViewer({
    */
   const [gutterRight, setGutterRight] = useState(0);
 
+  /**
+   * Widths the user has dragged, by column index, over the measured ones.
+   *
+   * Kept here rather than pushed back into `columns` because it is a view
+   * preference: it must not follow the document into a query result or a
+   * download, and it is thrown away when a different document is opened.
+   */
+  const [widths, setWidths] = useState<Record<number, number>>({});
+  /** The cell whose full value is on screen, when one was clicked open. */
+  const [inspect, setInspect] = useState<InspectedCell | null>(null);
+
   const table = format === "csv" && !!delimiter && !!columns?.length;
+  const widthOf = (ci: number) => widths[ci] ?? columns?.[ci]?.width ?? ORPHAN_COL_WIDTH;
+
+  /**
+   * Width of one character, in pixels.
+   *
+   * Column widths are written in `ch` so the ruler and the rows stay in step
+   * whatever the font resolves to, but two things need the number in pixels: a
+   * drag arrives in pixels, and whether a cell is cut off depends on the
+   * padding, which is in pixels too. Measured from a probe rather than assumed,
+   * so it stays right if the type ever changes.
+   */
+  const probeRef = useRef<HTMLSpanElement | null>(null);
+  const [chPx, setChPx] = useState(0);
+
+  useLayoutEffect(() => {
+    const el = probeRef.current;
+    if (!el) return;
+    const measure = () => {
+      const w = el.getBoundingClientRect().width / PROBE_CH;
+      if (w > 0) setChPx((prev) => (Math.abs(prev - w) < 0.01 ? prev : w));
+    };
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    measure();
+    return () => ro.disconnect();
+  }, [table]);
+
+  /*
+   * Characters the padding eats. A cell exactly as long as its column still
+   * shows an ellipsis, because the padding comes out of the text box — so the
+   * test for "cut off" has to account for it, or the last character-wide sliver
+   * of cells would show `…` and refuse to open.
+   */
+  const padCh = chPx > 0 ? CELL_PAD_PX / chPx : 0;
+
+  const drag = useRef<ColDrag | null>(null);
+
+  /*
+   * Column widths are set in `ch` so the ruler and the rows stay in step
+   * whatever the font size resolves to, but a drag arrives in pixels. The
+   * conversion is measured off the header cell being dragged rather than
+   * assumed, so it stays right if the type ever changes.
+   */
+  const startColDrag = (e: React.PointerEvent<HTMLElement>, index: number) => {
+    if (!(chPx > 0)) return;
+    drag.current = {
+      index,
+      startX: e.clientX,
+      startWidth: widthOf(index),
+      pxPerCh: chPx,
+    };
+    e.currentTarget.setPointerCapture(e.pointerId);
+    e.preventDefault();
+  };
+
+  const moveColDrag = (e: React.PointerEvent<HTMLElement>) => {
+    const d = drag.current;
+    if (!d) return;
+    const next = d.startWidth + (e.clientX - d.startX) / d.pxPerCh;
+    const clamped = Math.round(Math.max(MIN_COL_WIDTH, Math.min(MAX_COL_WIDTH, next)));
+    setWidths((w) => (w[d.index] === clamped ? w : { ...w, [d.index]: clamped }));
+  };
+
+  const endColDrag = (e: React.PointerEvent<HTMLElement>) => {
+    if (!drag.current) return;
+    drag.current = null;
+    e.currentTarget.releasePointerCapture(e.pointerId);
+  };
+
+  /** Double-click on the edge puts the column back to its measured width. */
+  const resetCol = (index: number) =>
+    setWidths((w) => {
+      if (!(index in w)) return w;
+      const next = { ...w };
+      delete next[index];
+      return next;
+    });
+
+  /*
+   * A cell is opened by clicking it, but only when it is actually cut off —
+   * an untruncated cell has nothing more to show, and making every cell a
+   * button would swallow ordinary text selection. A drag that selected text
+   * is not a click either, so a live selection cancels it.
+   */
+  const openCell = (e: React.MouseEvent<HTMLElement>, index: number, text: string) => {
+    const selection = window.getSelection();
+    if (selection && !selection.isCollapsed) return;
+    const r = e.currentTarget.getBoundingClientRect();
+    setInspect({
+      column: columns?.[index]?.name ?? `column ${index + 1}`,
+      text,
+      left: r.left,
+      top: r.top,
+      bottom: r.bottom,
+    });
+  };
+
+  /* The popover is anchored to a place on screen, so anything that moves the
+     rows underneath it — scrolling, resizing — takes it away rather than
+     leaving it pointing at the wrong cell. */
+  useEffect(() => {
+    if (!inspect) return;
+    const close = () => setInspect(null);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        close();
+      }
+    };
+    window.addEventListener("resize", close);
+    window.addEventListener("keydown", onKey, true);
+    return () => {
+      window.removeEventListener("resize", close);
+      window.removeEventListener("keydown", onKey, true);
+    };
+  }, [inspect]);
 
   useLayoutEffect(() => {
     const el = scrollerRef.current;
@@ -190,6 +337,8 @@ export default function DocViewer({
     if (headRef.current) headRef.current.scrollLeft = 0;
     setScrollTop(0);
     setGutterRight(el.offsetWidth - el.clientWidth);
+    setWidths({});
+    setInspect(null);
   }, [docId]);
 
   const rows = Math.max(1, Math.ceil(height / LINE_H) + 1);
@@ -250,17 +399,25 @@ export default function DocViewer({
       body = (
         <span className="cells">
           {cells.map((cell, ci) => {
-            const width = columns![ci]?.width ?? ORPHAN_COL_WIDTH;
+            const width = widthOf(ci);
             const spans = applyHits(
               [{ c: "t-cell", t: cell.text }],
               hitsForCell(cell, lineHits),
             );
+            /* Monospaced type, so one character is one column of width, and
+               the count is the truncation test — no per-cell measuring, which
+               at thirty rows by twenty columns would cost a frame. */
+            const clipped = cell.text.length > width - padCh;
             return (
               <span
-                className="cell"
+                className={clipped ? "cell clipped" : "cell"}
                 key={ci}
                 style={{ width: `${width}ch` }}
-                title={cell.text.length > width ? cell.text : undefined}
+                /* The value itself, not an instruction: the tooltip is the
+                   path for anyone not clicking, and the cursor and the hover
+                   already say the cell opens. */
+                title={clipped ? cell.text : undefined}
+                onClick={clipped ? (e) => openCell(e, ci, cell.text) : undefined}
               >
                 {spans.map((s, k) => (
                   <span className={s.c} key={k}>
@@ -304,7 +461,7 @@ export default function DocViewer({
 
   /** Total drawn width of the table, so the scroller knows its range. */
   const tableWidth = table
-    ? columns!.reduce((sum, c) => sum + c.width, 0)
+    ? columns!.reduce((sum, _c, ci) => sum + widthOf(ci), 0)
     : 0;
 
   return (
@@ -317,10 +474,27 @@ export default function DocViewer({
           style={{ paddingRight: gutterRight }}
         >
           <span className="no" />
+          {/* Sized in `ch` and measured in pixels; that is the whole job. */}
+          <span className="ch-probe" ref={probeRef} aria-hidden="true" />
           <span className="cells">
-            {columns!.map((c) => (
-              <span className="cell" key={c.name} style={{ width: `${c.width}ch` }}>
-                {c.name}
+            {columns!.map((c, ci) => (
+              <span className="cell" key={c.name} style={{ width: `${widthOf(ci)}ch` }}>
+                <span className="col-name">{c.name}</span>
+                {/* The grip stays visible even while the ruler gives up its
+                    text to the feed's own header row — the column is still
+                    there to be resized. */}
+                <span
+                  className="col-grip"
+                  role="separator"
+                  aria-orientation="vertical"
+                  aria-label={`Resize ${c.name}`}
+                  title="Drag to resize · double-click to reset"
+                  onPointerDown={(e) => startColDrag(e, ci)}
+                  onPointerMove={moveColDrag}
+                  onPointerUp={endColDrag}
+                  onPointerCancel={endColDrag}
+                  onDoubleClick={() => resetCol(ci)}
+                />
               </span>
             ))}
           </span>
@@ -332,6 +506,7 @@ export default function DocViewer({
         tabIndex={0}
         onScroll={(e) => {
           setScrollTop(e.currentTarget.scrollTop);
+          if (inspect) setInspect(null);
           // The column ruler sits outside the scroller so it cannot be covered
           // by the absolutely positioned rows; it is kept in step by hand.
           if (headRef.current) headRef.current.scrollLeft = e.currentTarget.scrollLeft;
@@ -360,6 +535,79 @@ export default function DocViewer({
           </div>
         )}
       </div>
+      {inspect && <CellPopover cell={inspect} onClose={() => setInspect(null)} />}
     </div>
+  );
+}
+
+/**
+ * The whole value of one cell, for the times the column is too narrow to hold
+ * it.
+ *
+ * A panel rather than an expanded row: every row here is exactly one line tall
+ * and positioned by its index, which is what lets a forty-million-line table
+ * scroll at all. A value that wraps to six lines cannot live inside that.
+ */
+function CellPopover({ cell, onClose }: { cell: InspectedCell; onClose: () => void }) {
+  const box = useRef<HTMLDivElement | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [placed, setPlaced] = useState<{ left: number; top: number } | null>(null);
+
+  /* Measured, then placed: the panel is sized by its own text, so where it
+     fits can only be known once it exists. It opens below the cell, flips
+     above when that would run off the bottom, and is pulled back inside the
+     right edge rather than being allowed to cause a page scroll. */
+  useLayoutEffect(() => {
+    const el = box.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    const margin = 8;
+    const left = Math.max(margin, Math.min(cell.left, window.innerWidth - r.width - margin));
+    const below = cell.bottom + 4;
+    const top = below + r.height + margin > window.innerHeight
+      ? Math.max(margin, cell.top - r.height - 4)
+      : below;
+    setPlaced({ left, top });
+  }, [cell]);
+
+  const copy = () => {
+    void navigator.clipboard?.writeText(cell.text).then(
+      () => {
+        setCopied(true);
+        window.setTimeout(() => setCopied(false), 1200);
+      },
+      () => setCopied(false),
+    );
+  };
+
+  return (
+    <>
+      {/* Anything outside the panel closes it, including a click on another
+          cell — which then opens that one, since the scrim sits underneath. */}
+      <div className="cell-scrim" onMouseDown={onClose} />
+      <div
+        className="cell-pop"
+        ref={box}
+        role="dialog"
+        aria-label={`Full value of ${cell.column}`}
+        style={{
+          left: placed?.left ?? cell.left,
+          top: placed?.top ?? cell.bottom + 4,
+          visibility: placed ? "visible" : "hidden",
+        }}
+      >
+        <div className="cell-pop-head">
+          <span className="cell-pop-col">{cell.column}</span>
+          <span className="cell-pop-len">{formatCount(cell.text.length)} chars</span>
+          <button type="button" onClick={copy}>
+            {copied ? "copied" : "copy"}
+          </button>
+          <button type="button" onClick={onClose} aria-label="Close">
+            ✕
+          </button>
+        </div>
+        <div className="cell-pop-body">{cell.text}</div>
+      </div>
+    </>
   );
 }
