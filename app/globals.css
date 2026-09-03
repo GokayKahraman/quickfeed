@@ -1031,6 +1031,7 @@ select {
 .table-head {
   flex: none;
   display: flex;
+  position: relative;
   height: 24px;
   align-items: center;
   overflow: hidden;
@@ -1052,6 +1053,17 @@ select {
   background: var(--ink-870);
   border-right: 1px solid var(--line-soft);
 }
+/* Draws nothing and takes no space — absolute, so it stays out of the flex
+   row it is measured inside. In flow it would push every column 20ch right. */
+.ch-probe {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 20ch;
+  height: 0;
+  overflow: hidden;
+}
+
 .table-head .cells {
   display: flex;
   padding-left: 14px;
@@ -1059,11 +1071,46 @@ select {
 }
 .table-head .cell {
   color: var(--cyan);
+  position: relative;
+}
+.table-head .col-name {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 /* While the feed's own header line is on screen there is no point naming the
-   columns twice; the ruler keeps its space and gives up its text. */
-.table-head.idle .cell {
+   columns twice; the ruler keeps its space and gives up its text. The grip is
+   not text, and stays. */
+.table-head.idle .col-name {
   visibility: hidden;
+}
+
+/* The draggable edge of a column. It lives in the cell's right padding, so it
+   sits between two columns without stealing width from either. */
+.col-grip {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 9px;
+  height: 24px;
+  cursor: col-resize;
+  touch-action: none;
+}
+.col-grip::after {
+  content: "";
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  right: 4px;
+  width: 1px;
+  background: var(--line-strong);
+  transition: background 0.12s;
+}
+.col-grip:hover::after,
+.col-grip:active::after {
+  top: 0;
+  bottom: 0;
+  background: var(--signal);
 }
 
 .row .cells {
@@ -1078,8 +1125,95 @@ select {
   text-overflow: ellipsis;
   white-space: pre;
 }
+/* A cut-off cell is the only kind worth clicking, and says so. */
+.cell.clipped {
+  cursor: zoom-in;
+}
+.cell.clipped:hover {
+  background: rgba(127, 214, 236, 0.09);
+}
 .t-cell {
   color: #d5e2ef;
+}
+
+/* --------------------------------------------------------------------------
+   Cell popover — the whole value, when the column cannot hold it
+   -------------------------------------------------------------------------- */
+
+.cell-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+}
+.cell-pop {
+  position: fixed;
+  z-index: 41;
+  width: min(560px, calc(100vw - 32px));
+  display: flex;
+  flex-direction: column;
+  background: var(--ink-900);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-sm);
+  box-shadow: 0 16px 44px rgba(0, 0, 0, 0.55);
+  overflow: hidden;
+}
+.cell-pop-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 8px 7px 11px;
+  background: var(--ink-870);
+  border-bottom: 1px solid var(--line-soft);
+}
+.cell-pop-col {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--cyan);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cell-pop-len {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--faint);
+  flex: none;
+}
+.cell-pop-head button {
+  flex: none;
+  height: 22px;
+  padding: 0 8px;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--dim);
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  transition: color 0.14s, border-color 0.14s;
+}
+.cell-pop-head button:hover {
+  color: var(--paper);
+  border-color: var(--line-strong);
+}
+/* The value keeps its own line breaks and wraps the rest; a long description
+   is the reason this exists, and it has to be readable and selectable. */
+.cell-pop-body {
+  padding: 11px 13px;
+  max-height: min(340px, 50vh);
+  overflow: auto;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: #d5e2ef;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
 }
 /* Row 1 is the feed's own header line, so it is labelled as such. */
 .row.head {
