@@ -1,4 +1,5 @@
 import type { Condition, Query } from "../types";
+import { MAX_FIELDS_PER_RECORD, MAX_VALUE_CHARS } from "../format/read";
 
 /**
  * Case- and diacritic-insensitive folding, tuned for Turkish feeds.
@@ -90,6 +91,29 @@ export function valuesFor(values: RecordValues, tag: string): string[] {
     }
   }
   return hits ?? [];
+}
+
+/**
+ * Records one field value, honouring the per-record guards.
+ *
+ * Shared by every format's query pass: a CSV column, a JSON key and an XML
+ * element all end up as one entry here, which is what lets a single condition
+ * evaluator serve all three.
+ */
+export function addField(values: RecordValues, key: string, text: string): void {
+  if (!key) return;
+  const trimmed = text.trim();
+  if (!trimmed) return;
+  const clipped =
+    trimmed.length > MAX_VALUE_CHARS ? trimmed.slice(0, MAX_VALUE_CHARS) : trimmed;
+  const list = values.get(key);
+  if (list) {
+    // A repeated key is normal (many <size> elements, a JSON array); a runaway
+    // one is not, so the list is capped rather than the record abandoned.
+    if (list.length < 64) list.push(clipped);
+  } else if (values.size < MAX_FIELDS_PER_RECORD) {
+    values.set(key, [clipped]);
+  }
 }
 
 export function isUsable(c: Condition): boolean {

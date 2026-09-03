@@ -947,9 +947,14 @@ select {
   background: var(--ink-950);
   outline-offset: -2px;
 }
-/* Spacer that gives the scrollbar its range; the rows are positioned over it. */
+/* Spacer that gives the scrollbar its range; the rows are positioned over it.
+   In table mode its width is set in `ch`, so it has to carry the same type as
+   the rows — inheriting the page font would resolve `ch` against the wrong
+   glyph and stretch the scroll range past the last column. */
 .viewer-canvas {
   width: 1px;
+  font-family: var(--mono);
+  font-size: 12.5px;
 }
 .viewer-window {
   position: absolute;
@@ -1000,6 +1005,89 @@ select {
 .t-text { color: #d5e2ef; }
 .t-cdata { color: #7f93a6; }
 .t-comment { color: #55697c; font-style: italic; }
+
+/* JSON syntax */
+.t-num { color: var(--sage); }
+.t-lit { color: var(--sand); font-style: italic; }
+
+/* --------------------------------------------------------------------------
+   Table view
+
+   A delimited feed is drawn as a real table rather than as its raw line: one
+   stored line is one row, so the same virtualisation, line index and find
+   machinery carry straight over. The column ruler sits outside the scroller —
+   the rows are absolutely positioned, so a ruler inside would be painted over
+   by them — and its horizontal offset is kept in step from the scroll handler.
+   -------------------------------------------------------------------------- */
+
+.viewer-stack {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+
+.table-head {
+  flex: none;
+  display: flex;
+  height: 24px;
+  align-items: center;
+  overflow: hidden;
+  background: var(--ink-870);
+  border-bottom: 1px solid var(--line-strong);
+  font-family: var(--mono);
+  /* Column widths are in `ch`, which resolves against the font size — so the
+     ruler has to be set in exactly the same type as the rows or every column
+     after the first drifts out of line. */
+  font-size: 12.5px;
+}
+.table-head .no {
+  flex: none;
+  width: 78px;
+  height: 24px;
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: var(--ink-870);
+  border-right: 1px solid var(--line-soft);
+}
+.table-head .cells {
+  display: flex;
+  padding-left: 14px;
+  padding-right: 32px;
+}
+.table-head .cell {
+  color: var(--cyan);
+}
+/* While the feed's own header line is on screen there is no point naming the
+   columns twice; the ruler keeps its space and gives up its text. */
+.table-head.idle .cell {
+  visibility: hidden;
+}
+
+.row .cells {
+  display: flex;
+  padding-left: 14px;
+  padding-right: 32px;
+}
+.cell {
+  flex: none;
+  padding-right: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: pre;
+}
+.t-cell {
+  color: #d5e2ef;
+}
+/* Row 1 is the feed's own header line, so it is labelled as such. */
+.row.head {
+  background: rgba(127, 214, 236, 0.05);
+}
+.row.head .t-cell {
+  color: var(--cyan);
+}
 
 .empty-view {
   position: absolute;

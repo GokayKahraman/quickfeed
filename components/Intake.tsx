@@ -101,16 +101,17 @@ export default function Intake({
   return (
     <div className="intake">
       <div>
-        <p className="eyebrow">XML feed · runs locally</p>
+        <p className="eyebrow">Product feed · runs locally</p>
         <h1 className="headline">
           Make the feed readable,
           <br />
           <span>then search inside it.</span>
         </h1>
         <p className="lede">
-          Turns a product feed squeezed onto a single line into indented XML, opens it in the
-          browser, and filters it with tag-based queries. The file stays on your computer —
-          nothing is uploaded.
+          Opens XML, JSON and delimited feeds — <code>.csv</code>, <code>.tsv</code> and the
+          tab-separated <code>.txt</code> the shopping channels want. Indents the document or
+          lays the table out in columns, then filters it by field. The file stays on your
+          computer — nothing is uploaded.
         </p>
         <TransformDemo />
 
@@ -125,8 +126,9 @@ export default function Intake({
           <p className="note">
             <b>02</b>
             <span>
-              Encoding is read from the <code>.xml</code> declaration, so ISO-8859-9 and
-              windows-1254 feeds keep their accented characters. <code>.gz</code> files are
+              The format is read from the bytes, not the file name, so a{" "}
+              <code>.txt</code> that is really tab-separated opens as a table. Encoding
+              follows the BOM or the XML declaration, and <code>.gz</code> files are
               unwrapped automatically.
             </span>
           </p>
@@ -188,7 +190,7 @@ export default function Intake({
                 <input
                   ref={fileInput}
                   type="file"
-                  accept=".xml,.rss,.atom,.txt,.gz,application/xml,text/xml"
+                  accept=".xml,.rss,.atom,.json,.jsonl,.ndjson,.csv,.tsv,.txt,.gz,application/xml,text/xml,application/json,text/csv,text/plain"
                   hidden
                   onChange={(e) => {
                     const f = e.target.files?.[0];
@@ -218,7 +220,7 @@ export default function Intake({
                 >
                   <strong>Drop the file here</strong>
                   <span>or click to choose one</span>
-                  <small>.xml · .rss · .atom · .xml.gz — no size limit</small>
+                  <small>.xml · .json · .csv · .tsv · .txt · .gz — no size limit</small>
                 </div>
               </>
             ) : (

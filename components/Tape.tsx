@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { formatCount } from "../lib/engine";
+import { formatCount, recordLabel } from "../lib/engine";
+import type { FeedFormat } from "../lib/types";
 
 interface TapeProps {
   /** Record density across the document, 512 buckets. */
@@ -12,6 +13,7 @@ interface TapeProps {
   firstLine: number;
   visibleLines: number;
   recordName: string | null;
+  format: FeedFormat;
   onSeek: (line: number) => void;
 }
 
@@ -32,6 +34,7 @@ export default function Tape({
   firstLine,
   visibleLines,
   recordName,
+  format,
   onSeek,
 }: TapeProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -136,7 +139,7 @@ export default function Tape({
       <div className="tape-legend">
         <span className="key">
           <i className="swatch" style={{ background: "rgba(127,214,236,0.55)" }} />
-          {recordName ? `<${recordName}> density` : "record density"}
+          {recordName ? `${recordLabel(format, recordName)} density` : "record density"}
         </span>
         {matchHistogram && (
           <span className="key">

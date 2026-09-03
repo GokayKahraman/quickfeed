@@ -13,7 +13,7 @@ export interface BackingStore {
   append(bytes: Uint8Array): void;
   read(start: number, end: number): Uint8Array;
   /** Snapshot for download. Disk-backed stores hand back a File, not a copy. */
-  snapshot(name: string): Promise<Blob>;
+  snapshot(mime: string): Promise<Blob>;
   dispose(): Promise<void>;
 }
 
@@ -139,8 +139,8 @@ class MemoryStore implements BackingStore {
     return out;
   }
 
-  async snapshot(): Promise<Blob> {
-    return new Blob(this.chunks as BlobPart[], { type: "application/xml" });
+  async snapshot(mime: string): Promise<Blob> {
+    return new Blob(this.chunks as BlobPart[], { type: mime });
   }
 
   async dispose(): Promise<void> {

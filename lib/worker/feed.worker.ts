@@ -4,14 +4,27 @@
  * Every expensive operation lives here: downloading, decoding, formatting,
  * indexing, querying and slicing lines. The main thread only ever receives
  * summaries and the handful of lines currently on screen.
+ *
+ * Three feed shapes share this one machine. Each has its own tokenizer and
+ * printer, but from `DocWriter` outwards — the line index, the density tape,
+ * the viewer, the find bar and the download — everything downstream is
+ * format-blind, because all three write plain lines into the same store.
  */
 
 import { createBackingStore, purgeTempFiles, type BackingStore } from "../store/backing";
-import { DocReader, DocWriter, type LineIndex } from "../store/document";
-import { formatStream, maybeDecompress, runQuery, Cancelled } from "../xml/pipeline";
+import { DensityHistogram, DocReader, DocWriter, type LineIndex } from "../store/document";
+import { formatStream, runQuery } from "../xml/pipeline";
+import { formatJsonStream, runJsonQuery } from "../json/pipeline";
+import { ROOT_ITEM } from "../json/formatter";
+import { formatCsvStream, runCsvQuery, ROW_RECORD } from "../csv/pipeline";
+import { Cancelled, maybeDecompress, peekStream } from "../format/read";
+import { extensionFor, mimeFor, sniffFeed } from "../format/detect";
 import { buildSearchRegex, describeQuery, foldForSearch } from "../xml/match";
 import type {
+  ColumnInfo,
   DocSummary,
+  FeedFormat,
+  FieldInfo,
   FindMatch,
   LoadProgress,
   WorkerRequest,
@@ -23,6 +36,8 @@ interface OpenDoc {
   store: BackingStore;
   index: LineIndex;
   reader: DocReader;
+  /** Indent the document was written with, so a query pass matches it. */
+  indent: string;
 }
 
 const docs = new Map<string, OpenDoc>();
@@ -30,6 +45,8 @@ const docs = new Map<string, OpenDoc>();
 const SEARCH_BATCH = 4096;
 /** Hits kept for navigation. Beyond this the bar reports the total as "+". */
 const MAX_MATCHES = 20000;
+/** Bytes read before the format is decided. One header row is plenty. */
+const SNIFF_BYTES = 64 * 1024;
 const yieldToLoop = () => new Promise<void>((r) => setTimeout(r, 0));
 
 let cancelled = false;
@@ -47,7 +64,9 @@ function post(msg: WorkerResponse, transfer?: Transferable[]): void {
 
 function baseName(name: string): string {
   const cleaned = name.split(/[\\/]/).pop() ?? "feed";
-  return cleaned.replace(/\.(xml|rss|atom|txt)?(\.gz)?$/i, "") || "feed";
+  return (
+    cleaned.replace(/\.(xml|rss|atom|txt|json|jsonl|ndjson|csv|tsv)?(\.gz)?$/i, "") || "feed"
+  );
 }
 
 function slugify(s: string): string {
@@ -108,7 +127,7 @@ async function openSource(
   const declared = res.headers.get("content-length");
   const { stream, gzipped } = await maybeDecompress(res.body);
 
-  let name = "feed.xml";
+  let name = "feed";
   try {
     const path = new URL(source.url).pathname;
     const last = path.split("/").filter(Boolean).pop();
@@ -124,53 +143,154 @@ async function openSource(
   };
 }
 
+/** What every format's first pass has to report, whatever it parsed. */
+interface Formatted {
+  rootName: string | null;
+  recordName: string | null;
+  recordCount: number;
+  /** Nesting level of the record, for picking the right density curve. */
+  recordDepth: number;
+  recordCandidates: FieldInfo[];
+  fields: FieldInfo[];
+  depthHistograms: DensityHistogram[];
+  bytesRead: number;
+  columns?: ColumnInfo[];
+  raggedRows?: number;
+}
+
+async function formatByKind(
+  format: FeedFormat,
+  delimiter: string,
+  stream: ReadableStream<Uint8Array>,
+  totalBytes: number | null,
+  writer: DocWriter,
+  req: Extract<WorkerRequest, { type: "load" }>,
+  onProgress: (p: LoadProgress) => void,
+): Promise<Formatted> {
+  const shouldCancel = () => cancelled;
+
+  if (format === "csv") {
+    const { shape, histogram, bytesRead } = await formatCsvStream({
+      stream,
+      totalBytes,
+      out: writer,
+      delimiter,
+      onProgress,
+      shouldCancel,
+    });
+    return {
+      rootName: null,
+      recordName: ROW_RECORD,
+      recordCount: shape.recordCount,
+      recordDepth: 1,
+      recordCandidates: shape.recordCandidates,
+      fields: shape.fields,
+      depthHistograms: [histogram],
+      bytesRead,
+      columns: shape.columns,
+      raggedRows: shape.raggedRows,
+    };
+  }
+
+  if (format === "json") {
+    const { shape, depthHistograms, bytesRead } = await formatJsonStream({
+      stream,
+      totalBytes,
+      out: writer,
+      indent: req.indent,
+      onProgress,
+      shouldCancel,
+    });
+    const recordName = shape.recordName() ?? ROOT_ITEM;
+    const stat = shape.names.get(recordName);
+    return {
+      rootName: shape.rootName,
+      recordName,
+      recordCount: stat?.count ?? 0,
+      recordDepth: stat?.minDepth ?? 1,
+      recordCandidates: shape.recordCandidates(),
+      fields: shape.fieldNames(),
+      depthHistograms,
+      bytesRead,
+    };
+  }
+
+  const { shape, depthHistograms, bytesRead } = await formatStream({
+    stream,
+    totalBytes,
+    out: writer,
+    format: { indent: req.indent, collapseText: req.collapseText },
+    onProgress,
+    shouldCancel,
+  });
+  const recordName = shape.recordName();
+  const stat = recordName ? shape.names.get(recordName) : null;
+  return {
+    rootName: shape.rootName,
+    recordName,
+    recordCount: stat?.count ?? 0,
+    recordDepth: stat?.minDepth ?? 1,
+    recordCandidates: shape.recordCandidates(),
+    fields: shape.fieldNames(),
+    depthHistograms,
+    bytesRead,
+  };
+}
+
 async function handleLoad(req: Extract<WorkerRequest, { type: "load" }>): Promise<void> {
   await releaseAll();
   const started = performance.now();
   const onProgress = (p: LoadProgress) => post({ id: req.id, type: "progress", progress: p });
 
-  const { stream, totalBytes, name } = await openSource(req.source, onProgress);
+  const opened = await openSource(req.source, onProgress);
+  // Decide the format before building any parser, then replay the bytes that
+  // the decision was made from so the parser still sees the feed from the top.
+  const { stream, head } = await peekStream(opened.stream, SNIFF_BYTES);
+  const { format, delimiter } = sniffFeed(head, opened.name);
+
   const id = `doc${++docSeq}`;
   const store = await createBackingStore(id);
   const writer = new DocWriter(store);
-  const format = { indent: req.indent, collapseText: req.collapseText };
 
-  let result;
+  let result: Formatted;
   try {
-    result = await formatStream({
-      stream,
-      totalBytes,
-      out: writer,
+    result = await formatByKind(
       format,
+      delimiter,
+      stream,
+      opened.totalBytes,
+      writer,
+      req,
       onProgress,
-      shouldCancel: () => cancelled,
-    });
+    );
   } catch (err) {
     await store.dispose();
     throw err;
   }
 
   const index = writer.close();
-  const { shape, depthHistograms } = result;
-  const recordName = shape.recordName();
-  const stat = recordName ? shape.names.get(recordName) : null;
-  const depth = stat ? stat.minDepth : 1;
-  const byDepth = depthHistograms.map((h) => h.finalize(index.lineCount));
-  const histogram = depth >= 1 && depth <= 4 ? byDepth[depth - 1] : byDepth[0];
+  const byDepth = result.depthHistograms.map((h) => h.finalize(index.lineCount));
+  const depth = result.recordDepth;
+  const histogram =
+    depth >= 1 && depth <= byDepth.length ? byDepth[depth - 1] : (byDepth[0] ?? []);
 
   const summary: DocSummary = {
     id,
     kind: "source",
-    label: name,
-    fileName: `${baseName(name)}.formatted.xml`,
+    label: opened.name,
+    fileName: `${baseName(opened.name)}.formatted.${extensionFor(format, delimiter)}`,
     byteLength: index.byteLength,
     lineCount: index.lineCount,
-    rootName: shape.rootName,
-    recordName,
-    recordCount: stat ? stat.count : 0,
-    recordAuto: recordName,
-    recordCandidates: shape.recordCandidates(),
-    fields: shape.fieldNames(),
+    rootName: result.rootName,
+    recordName: result.recordName,
+    recordCount: result.recordCount,
+    format,
+    delimiter: format === "csv" ? delimiter : undefined,
+    columns: result.columns,
+    raggedRows: result.raggedRows,
+    recordAuto: result.recordName,
+    recordCandidates: result.recordCandidates,
+    fields: result.fields,
     histogram,
     depthHistograms: byDepth,
     persistent: store.persistent,
@@ -178,17 +298,35 @@ async function handleLoad(req: Extract<WorkerRequest, { type: "load" }>): Promis
     sourceBytes: result.bytesRead,
   };
 
-  docs.set(id, { summary, store, index, reader: new DocReader(store, index) });
+  docs.set(id, {
+    summary,
+    store,
+    index,
+    reader: new DocReader(store, index),
+    indent: req.indent,
+  });
   post({ id: req.id, type: "doc", doc: summary });
+}
+
+interface Filtered {
+  matched: number;
+  scanned: number;
+  resultHistogram: DensityHistogram;
+  matchHistogram: DensityHistogram;
 }
 
 async function handleQuery(req: Extract<WorkerRequest, { type: "query" }>): Promise<void> {
   const src = docs.get(req.docId);
   if (!src) throw new Error("Source document not found.");
+  const { format, delimiter } = src.summary;
   // The detected record tag is only a guess; the user can name a different one.
   const recordName = req.recordName?.trim() || src.summary.recordName;
   if (!recordName) {
-    throw new Error("No repeating record tag was found in this document. Pick one in the Record box.");
+    throw new Error(
+      format === "csv"
+        ? "This table has no rows to filter."
+        : "No repeating record was found in this document. Pick one in the Record box.",
+    );
   }
 
   // One result at a time; the previous one is dropped before a new one starts.
@@ -203,18 +341,41 @@ async function handleQuery(req: Extract<WorkerRequest, { type: "query" }>): Prom
   const id = `doc${++docSeq}`;
   const store = await createBackingStore(id);
   const writer = new DocWriter(store);
+  const onProgress = (p: LoadProgress) => post({ id: req.id, type: "progress", progress: p });
+  const shouldCancel = () => cancelled;
 
-  let result;
+  let result: Filtered;
   try {
-    result = await runQuery({
-      source: src.store,
-      recordName,
-      query: req.query,
-      format: { indent: "    ", collapseText: false },
-      out: writer,
-      onProgress: (p) => post({ id: req.id, type: "progress", progress: p }),
-      shouldCancel: () => cancelled,
-    });
+    if (format === "csv") {
+      result = await runCsvQuery({
+        source: src.store,
+        delimiter: delimiter || ",",
+        query: req.query,
+        out: writer,
+        onProgress,
+        shouldCancel,
+      });
+    } else if (format === "json") {
+      result = await runJsonQuery({
+        source: src.store,
+        recordName,
+        query: req.query,
+        indent: src.indent,
+        out: writer,
+        onProgress,
+        shouldCancel,
+      });
+    } else {
+      result = await runQuery({
+        source: src.store,
+        recordName,
+        query: req.query,
+        format: { indent: "    ", collapseText: false },
+        out: writer,
+        onProgress,
+        shouldCancel,
+      });
+    }
   } catch (err) {
     await store.dispose();
     throw err;
@@ -226,14 +387,20 @@ async function handleQuery(req: Extract<WorkerRequest, { type: "query" }>): Prom
     id,
     kind: "result",
     label: description,
-    fileName: `${baseName(src.summary.label)}.${slugify(description)}.xml`,
+    fileName: `${baseName(src.summary.label)}.${slugify(description)}.${extensionFor(
+      format,
+      delimiter,
+    )}`,
     byteLength: index.byteLength,
     lineCount: index.lineCount,
     rootName: src.summary.rootName,
     recordName,
+    recordCount: result.matched,
+    format,
+    delimiter,
+    columns: src.summary.columns,
     recordAuto: src.summary.recordAuto,
     recordCandidates: src.summary.recordCandidates,
-    recordCount: result.matched,
     fields: src.summary.fields,
     histogram: result.resultHistogram.finalize(index.lineCount),
     depthHistograms: [],
@@ -244,7 +411,13 @@ async function handleQuery(req: Extract<WorkerRequest, { type: "query" }>): Prom
     scannedRecords: result.scanned,
   };
 
-  docs.set(id, { summary, store, index, reader: new DocReader(store, index) });
+  docs.set(id, {
+    summary,
+    store,
+    index,
+    reader: new DocReader(store, index),
+    indent: src.indent,
+  });
   post({ id: req.id, type: "doc", doc: summary });
 }
 
@@ -339,7 +512,9 @@ async function handle(req: WorkerRequest): Promise<void> {
     case "snapshot": {
       const doc = docs.get(req.docId);
       if (!doc) throw new Error("Document not found.");
-      const pending = doc.store.snapshot(doc.summary.fileName);
+      const pending = doc.store.snapshot(
+        mimeFor(doc.summary.format, doc.summary.delimiter),
+      );
       snapshotting = pending.then(
         () => undefined,
         () => undefined,
