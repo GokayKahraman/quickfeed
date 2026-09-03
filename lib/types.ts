@@ -30,16 +30,50 @@ export interface Query {
 }
 
 /**
- * HTTP Basic credentials for a protected feed.
+ * How the user signs in to a protected feed.
  *
  * Held in memory for the length of one fetch and never persisted: not in
  * localStorage, not in the URL, not in the shareable `feedlink` link. A feed
  * password in a query string ends up in browser history and in every access
  * log between here and the host.
+ *
+ * The four here are the ones that are decided before the request leaves —
+ * a header, or a query parameter. See `lib/auth.ts` for why the handshake and
+ * signing schemes are named back to the user instead.
  */
-export interface Credentials {
-  username: string;
-  password: string;
+export type FeedAuth =
+  | { type: "none" }
+  | { type: "basic"; username: string; password: string }
+  | { type: "bearer"; token: string }
+  /** `in` is the difference between `X-API-Key: …` and `?api_key=…`. */
+  | { type: "apikey"; key: string; value: string; in: "header" | "query" };
+
+export type AuthType = FeedAuth["type"];
+
+/**
+ * A feed answering "not without a sign-in".
+ *
+ * Carried out of the worker as data rather than as wording in an error
+ * message, because the app has to *act* on it — put the sign-in in front of
+ * the user and retry — and matching on prose to decide that would break the
+ * first time the copy was reworded.
+ */
+export interface AuthChallenge {
+  /** Scheme named in `WWW-Authenticate`, when the host named one. */
+  scheme: string | null;
+  /** Realm the host labelled the area with; shown to help identify the login. */
+  realm: string | null;
+  /** True when a sign-in was sent and refused, false when none was offered. */
+  rejected: boolean;
+  /**
+   * The scheme read off the header, when it is one the app can perform.
+   *
+   * Null when the host named nothing — which is the common case for feed APIs
+   * — and the user has to say which kind of sign-in they were given.
+   */
+  suggested: AuthType | null;
+  /** The type that was tried, so a refusal can say what it refused. */
+  attempted: AuthType | null;
 }
 
 export interface FieldInfo {
@@ -126,12 +160,7 @@ export type WorkerRequest =
       type: "load";
       source:
         | { kind: "file"; file: File }
-        | {
-            kind: "url";
-            url: string;
-            viaProxy: boolean;
-            credentials?: Credentials;
-          };
+        | { kind: "url"; url: string; viaProxy: boolean; auth?: FeedAuth };
       indent: string;
       collapseText: boolean;
     }
@@ -155,7 +184,13 @@ export type WorkerResponse =
   | ({ id: number; type: "search" } & FindResult)
   | { id: number; type: "snapshot"; blob: Blob; fileName: string }
   | { id: number; type: "done" }
-  | { id: number; type: "error"; message: string };
+  | {
+      id: number;
+      type: "error";
+      message: string;
+      /** Set when the failure was a feed asking to be signed in to. */
+      authChallenge?: AuthChallenge;
+    };
 
 export const OP_LABELS: Record<QueryOp, string> = {
   contains: "contains",

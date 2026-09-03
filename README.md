@@ -194,30 +194,71 @@ loopback adresleri DNS çözümlemesi sonrası engellenir.
 
 ## Şifreli beslemeler
 
-Kullanıcı adı ve şifre isteyen beslemeler için **This feed needs a sign-in** seçeneği iki
-alan açar. Kimlik **HTTP Basic** olarak gönderilir; beslemelerin neredeyse tamamının
-kullandığı şema budur. Sunucu Digest ya da başka bir şema istiyorsa `WWW-Authenticate`
-başlığından okunur ve şifreyi yeniden yazdırmak yerine bunun desteklenmediği söylenir.
+Korumalı beslemeler için adres satırının altında bir **Auth** seçicisi var. Dört şema
+destekleniyor:
 
-Adres `https://kullanıcı:şifre@host/feed.xml` biçiminde yapıştırılırsa — besleme
-sağlayıcıları adresi genelde böyle verir — kimlik alanlara taşınır ve adres kutusundan
-silinir. `fetch` zaten adres içindeki kimliği kabul etmez; ayrıca şifrenin ekranda açıkta
-duran ve kopyalanıp paylaşılan kutuda kalmasının anlamı yok.
+| Seçim | Ne gönderilir |
+| --- | --- |
+| **No auth** | — (varsayılan) |
+| **Basic auth** | `Authorization: Basic base64(kullanıcı:şifre)` |
+| **Bearer token** | `Authorization: Bearer <token>` |
+| **API key** | Seçime göre `<Ad>: <değer>` başlığı **ya da** `?<ad>=<değer>` sorgu parametresi |
 
-Seçenek açıldığında proxy de açılır. Şifreyi doğrudan tarayıcıdan göndermek, hedef sitenin
-`Authorization` başlığını CORS'ta izin vermesini gerektirir ve besleme sunucuları bunu
-neredeyse hiç yapmaz. Proxy çalışan yoldur; anahtar yine de bir düğme, kapatılabilir.
+Dördü de isteğin **önceden** kurulabildiği şemalar: bir başlık ya da bir sorgu parametresi.
+Digest, NTLM, OAuth 1.0/2.0, AWS Signature ve Hawk el sıkışma veya isteğin üzerine imza
+gerektirir; bunlar desteklenmiyor ve yarım yamalak taklit edilmek yerine adıyla söyleniyor
+(aşağıya bakın).
 
-**Kimlik nereye gitmez:** sorgu dizesine (`?url=…`) girmez — oraya yazılan bir şifre
-tarayıcı geçmişine, `Referer` başlığına ve aradaki her erişim kaydına düşerdi. Bunun yerine
-aynı origin'e giden bir istek başlığıyla (`x-feed-authorization`) taşınır, proxy bunu
-yalnızca hedef sunucuya `Authorization` olarak iletir. Yönlendirme başka bir origin'e
-çıkarsa `fetch` başlığı kendisi düşürür, yani bir sitenin şifresi başka bir siteye gitmez.
-Kimlik hiçbir yere yazılmaz: `localStorage` yok, adres çubuğu yok, paylaşılabilir
-`feedlink` bağlantısında yok, sunucu tarafında kayıt yok. Sekme kapandığında gider.
+### Şemayı tespit ediyor muyuz?
 
-Bir 401 kimlik girilmeden alınırsa alanlar kendiliğinden açılır — o yanıtla yapılabilecek
-tek yararlı şey bu.
+**Bazen.** Sunucu 401 dönerken `WWW-Authenticate` başlığı yollarsa şema oradan okunur ve
+seçici kendiliğinden doğru şemaya ayarlanır:
+
+- `WWW-Authenticate: Basic realm="..."` → Basic seçilir, realm de kutuda gösterilir.
+- `WWW-Authenticate: Bearer ...` → Bearer seçilir.
+- `Digest`, `NTLM`, `Negotiate` gibi bir şema → şifre sorulmaz; "bu şemayı yapamıyorum"
+  denir. Doğru şifreyi tekrar tekrar yazdırmanın anlamı yok.
+
+**Çoğu zaman tespit edilemez.** Feed API'leri sık sık çıplak bir 401 ya da 403 döner,
+`WWW-Authenticate` hiç göndermez; bearer token ve API key ise prensip olarak kendini hiçbir
+yanıtta ilan etmez. O durumda kutu "hangi tür olduğunu sunucu söylemedi — size verilen türü
+seçin" der ve seçim kullanıcıya bırakılır. Yani: **tespit edebiliyorsak seçiyoruz,
+edemiyorsak soruyoruz.**
+
+### Sorup tekrar deneme
+
+Kimlik girilmeden atılan istek 401 (ya da çıplak 403) dönerse akış durmaz: ekrana bir giriş
+kutusu gelir, hangi adresin sorduğunu ve — sunucu söylediyse — hangi şemayı istediğini yazar.
+Kullanıcı doldurup **Sign in and fetch** dediğinde **aynı istek** aynı ayarlarla yeniden
+atılır; adres, indent ve proxy tercihi korunur. Yanlışsa kutu açık kalır ve "reddedildi" der,
+düzeltip tekrar denenebilir — baştan başlamak gerekmez. `Esc` ya da **Cancel** kutuyu kapatır
+ve hata satırı ekranda kalır.
+
+Şema seçilince proxy de açılır. Kimlik başlığını doğrudan tarayıcıdan göndermek hedef sitenin
+CORS'ta o başlığa izin vermesini gerektirir ve besleme sunucuları bunu neredeyse hiç yapmaz.
+Proxy çalışan yoldur; anahtar yine de bir düğme, kapatılabilir.
+
+### Kimlik nereye gitmez
+
+- **Kendi sorgu dizemize girmez.** `?url=…&key=…` yazsaydık kimlik tarayıcı geçmişine,
+  `Referer` başlığına ve aradaki her erişim kaydına düşerdi. Bunun yerine tamamı tek bir
+  istek başlığında (`x-feed-auth`, base64'lenmiş küçük bir JSON) aynı origin'e gider; proxy
+  onu açıp yalnızca hedef sunucuya uygular. Sorgu parametresi isteyen bir API key bile
+  adrese **proxy tarafında** eklenir — yani yalnızca feed sunucusuna giden istekte görünür.
+- **Yönlendirmede başka bir origin'e geçmez.** Proxy yönlendirmeleri elle yürütür: her
+  adımda özel ağ kontrolü yeniden çalışır, origin değiştiği anda kimlik başlığı da sorgu
+  parametresi de düşürülür. (`fetch` bunu yalnızca `Authorization` için kendiliğinden yapar;
+  `X-Api-Key` onun için sıradan bir başlıktır ve yönlendirmeyi izlerdi.)
+- **Hiçbir yere yazılmaz.** `localStorage` yok, adres çubuğu yok, paylaşılabilir `feedlink`
+  bağlantısında yok, sunucu tarafında kayıt yok. Sekme kapandığında gider.
+- **Proxy'nin ayarlayamayacağı başlıklar reddedilir.** Bir kimlik `Authorization` ya da
+  satıcının `X-Api-Key`'ini ayarlayabilir; `Host`, `Cookie` ya da bağlantıyı tarif eden
+  başlıkları ayarlayamaz.
+
+Adres `https://kullanıcı:şifre@host/feed.xml` biçiminde yapıştırılırsa — besleme sağlayıcıları
+adresi genelde böyle verir — kimlik Basic alanlarına taşınır ve adres kutusundan silinir.
+`fetch` zaten adres içindeki kimliği kabul etmez; ayrıca şifrenin kopyalanıp paylaşılan
+kutuda kalmasının anlamı yok.
 
 ## Vercel'e dağıtım
 
@@ -289,5 +330,6 @@ lib/
   adsız bir sütun sorgulanamayacağı için gerekli, ama indirilen dosyaya da yansır.
 - JSON sonucu her zaman bir dizidir; kayıtları saran `{"meta":…}` gibi bir kabuk korunmaz.
 - Sayısal karşılaştırma yoktur; `price > 100` yazılamaz, koşullar metin üzerinde çalışır.
-- Kimlik doğrulamada yalnızca HTTP Basic desteklenir; Digest, NTLM ve OAuth yoktur. Şifre
-  hiçbir yerde saklanmadığı için her oturumda yeniden girilir.
+- Kimlik doğrulamada Basic, Bearer ve API key desteklenir. Digest, NTLM, OAuth 1.0/2.0,
+  AWS Signature, Hawk ve benzeri el sıkışma/imza şemaları yoktur; karşılaşıldığında adıyla
+  bildirilir. Kimlik hiçbir yerde saklanmadığı için her oturumda yeniden girilir.
