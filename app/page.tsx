@@ -292,7 +292,9 @@ export default function Page() {
           onIndentChange={setIndent}
           onCollapseChange={setCollapseText}
           onFile={(file) => runLoad({ kind: "file", file })}
-          onUrl={(url, viaProxy) => runLoad({ kind: "url", url, viaProxy })}
+          onUrl={(url, viaProxy, credentials) =>
+            runLoad({ kind: "url", url, viaProxy, credentials })
+          }
           onCancel={() => engineRef.current?.cancel()}
         />
       </div>

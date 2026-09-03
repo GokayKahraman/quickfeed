@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import type { LoadProgress } from "../lib/types";
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { Credentials, LoadProgress } from "../lib/types";
 import { formatBytes, formatCount } from "../lib/engine";
 import TransformDemo from "./TransformDemo";
 
@@ -14,7 +14,7 @@ interface Props {
   onIndentChange: (v: string) => void;
   onCollapseChange: (v: boolean) => void;
   onFile: (file: File) => void;
-  onUrl: (url: string, viaProxy: boolean) => void;
+  onUrl: (url: string, viaProxy: boolean, credentials?: Credentials) => void;
   onCancel: () => void;
 }
 
@@ -54,6 +54,50 @@ function readFeedlinkParam(search: string): string {
   }
 }
 
+/**
+ * Credentials a feed host handed out inside the address, as
+ * `https://user:pass@host/feed.xml`.
+ *
+ * Pasted whole, that address would sit in a text field in plain sight and go
+ * back out in any link the user copies. Lifting the pair into the sign-in
+ * fields keeps the password out of the box that gets shared, and saves the
+ * user from picking the URL apart by hand.
+ */
+function splitUserInfo(value: string): { url: string; credentials: Credentials | null } {
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    return { url: value, credentials: null };
+  }
+  if (!parsed.username && !parsed.password) return { url: value, credentials: null };
+
+  const credentials = {
+    username: safeDecode(parsed.username),
+    password: safeDecode(parsed.password),
+  };
+  parsed.username = "";
+  parsed.password = "";
+  return { url: parsed.toString(), credentials };
+}
+
+function safeDecode(v: string): string {
+  try {
+    return decodeURIComponent(v);
+  } catch {
+    return v;
+  }
+}
+
+/**
+ * Does this failure mean the feed wants a sign-in?
+ *
+ * Matched against the wording in `lib/worker/feed.worker.ts`; the two move
+ * together. Worth the coupling — landing on a 401 with the fields still
+ * collapsed leaves the user with nothing to act on.
+ */
+const AUTH_FAILURE = /password protected|username and password|sign-in|refused access/i;
+
 export default function Intake({
   busy,
   progress,
@@ -69,29 +113,62 @@ export default function Intake({
   const [mode, setMode] = useState<"file" | "url">("url");
   const [url, setUrl] = useState("");
   const [viaProxy, setViaProxy] = useState(true);
+  const [needsAuth, setNeedsAuth] = useState(false);
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [over, setOver] = useState(false);
   const fileInput = useRef<HTMLInputElement | null>(null);
   const fetchBtn = useRef<HTMLButtonElement | null>(null);
+
+  /** Takes an address from anywhere, keeping any credentials buried in it. */
+  const acceptUrl = useCallback((value: string) => {
+    const { url: clean, credentials } = splitUserInfo(value);
+    setUrl(clean);
+    if (!credentials) return;
+    setNeedsAuth(true);
+    setUsername(credentials.username);
+    setPassword(credentials.password);
+  }, []);
 
   useEffect(() => {
     const feedlink = readFeedlinkParam(window.location.search);
     if (feedlink) {
       setMode("url");
-      setUrl(feedlink);
+      acceptUrl(feedlink);
     }
-  }, []);
+  }, [acceptUrl]);
+
+  /* A 401 arrives with the fields collapsed on the first try. Opening them is
+     the only useful thing to do with that answer. */
+  useEffect(() => {
+    if (error && AUTH_FAILURE.test(error)) setNeedsAuth(true);
+  }, [error]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const feedlink = readFeedlinkParam(window.location.search);
     if (!feedlink || params.get("fetch") !== "true") return;
-    if (url.trim() !== feedlink) return;
+    // Compared against the scrubbed form: a `user:pass@` link has already had
+    // its credentials lifted out of the field by the time this runs.
+    if (url.trim() !== splitUserInfo(feedlink).url) return;
 
     const timer = window.setTimeout(() => {
       fetchBtn.current?.click();
     }, 0);
     return () => window.clearTimeout(timer);
   }, [url]);
+
+  /* Credentials are read straight off the fields and handed to the fetch. They
+     are never written to storage, to the address bar or to a shareable link —
+     when the tab closes, they are gone. */
+  const submit = () => {
+    const address = url.trim();
+    if (!address) return;
+    const credentials =
+      needsAuth && (username || password) ? { username, password } : undefined;
+    onUrl(address, viaProxy, credentials);
+  };
 
   const pct =
     progress && progress.totalBytes
@@ -136,7 +213,8 @@ export default function Intake({
             <b>03</b>
             <span>
               If the target site blocks direct reads, the proxy option streams the bytes through
-              without parsing or storing them.
+              without parsing or storing them. A feed behind a username and password opens the
+              same way — the sign-in is used for that one fetch and never stored.
             </span>
           </p>
         </div>
@@ -230,9 +308,9 @@ export default function Intake({
                   placeholder="https://example.com/feed.xml"
                   value={url}
                   spellCheck={false}
-                  onChange={(e) => setUrl(e.target.value)}
+                  onChange={(e) => acceptUrl(e.target.value)}
                   onKeyDown={(e) => {
-                    if (e.key === "Enter" && url.trim()) onUrl(url.trim(), viaProxy);
+                    if (e.key === "Enter") submit();
                   }}
                   aria-label="Feed address"
                 />
@@ -244,13 +322,75 @@ export default function Intake({
                   />
                   Fetch through proxy (when CORS blocks)
                 </label>
+                <label className="toggle">
+                  <input
+                    type="checkbox"
+                    checked={needsAuth}
+                    onChange={(e) => {
+                      setNeedsAuth(e.target.checked);
+                      /* A password sent straight from the browser needs the
+                         feed host to allow the header in CORS, which almost
+                         none do. The proxy is the path that works, so it comes
+                         on with the fields — still a switch, still overridable. */
+                      if (e.target.checked) setViaProxy(true);
+                    }}
+                  />
+                  This feed needs a sign-in
+                </label>
+
+                {needsAuth && (
+                  <div className="auth-row">
+                    <input
+                      type="text"
+                      placeholder="username"
+                      value={username}
+                      spellCheck={false}
+                      autoComplete="off"
+                      onChange={(e) => setUsername(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") submit();
+                      }}
+                      aria-label="Feed username"
+                    />
+                    <span className="auth-reveal">
+                      <input
+                        type={showPassword ? "text" : "password"}
+                        placeholder="password"
+                        value={password}
+                        spellCheck={false}
+                        autoComplete="off"
+                        onChange={(e) => setPassword(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") submit();
+                        }}
+                        aria-label="Feed password"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowPassword((v) => !v)}
+                        aria-pressed={showPassword}
+                        title={showPassword ? "Hide the password" : "Show the password"}
+                      >
+                        {showPassword ? "hide" : "show"}
+                      </button>
+                    </span>
+                  </div>
+                )}
+
+                {needsAuth && (
+                  <p className="auth-note">
+                    Sent to the feed host for this one fetch, over the proxy. Not saved,
+                    not put in the address bar, and gone when the tab closes.
+                  </p>
+                )}
+
                 <span style={{ flex: 1 }} />
                 <button
                   ref={fetchBtn}
                   type="button"
                   className="btn primary lg"
                   disabled={!url.trim()}
-                  onClick={() => onUrl(url.trim(), viaProxy)}
+                  onClick={submit}
                 >
                   Fetch feed
                 </button>

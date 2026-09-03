@@ -22,6 +22,7 @@ import { extensionFor, mimeFor, sniffFeed } from "../format/detect";
 import { buildSearchRegex, describeQuery, foldForSearch } from "../xml/match";
 import type {
   ColumnInfo,
+  Credentials,
   DocSummary,
   FeedFormat,
   FieldInfo,
@@ -84,6 +85,53 @@ async function releaseAll(): Promise<void> {
   docs.clear();
 }
 
+/**
+ * `Authorization: Basic` value for a username and password.
+ *
+ * RFC 7617 leaves the encoding to the server but names UTF-8 as the one to
+ * use, and `btoa` throws on anything past Latin-1 — so the pair is encoded to
+ * bytes first. Passwords with an accented character are common enough that
+ * the throw would be a real failure, not a theoretical one.
+ */
+function basicAuthHeader({ username, password }: Credentials): string {
+  const bytes = new TextEncoder().encode(`${username}:${password}`);
+  let binary = "";
+  for (const b of bytes) binary += String.fromCharCode(b);
+  return `Basic ${btoa(binary)}`;
+}
+
+/**
+ * What went wrong, in the terms the user can act on.
+ *
+ * A 401 is the whole reason this path exists, so it never surfaces as a bare
+ * status line: it says whether the credentials were wrong or simply missing.
+ */
+function describeFetchFailure(
+  status: number,
+  statusText: string,
+  hadCredentials: boolean,
+  challenge: string | null,
+): string {
+  if (status === 401) {
+    /* A host asking for Digest, NTLM or anything else will keep refusing a
+       Basic header forever. Saying so beats letting the user retype a password
+       that was right all along. */
+    const scheme = challenge?.trim().split(/[\s,]/, 1)[0]?.toLowerCase();
+    if (scheme && scheme !== "basic") {
+      return `This feed asks for ${challenge?.trim().split(/[\s,]/, 1)[0]} authentication, which QuickFeed cannot provide — only a username and password (Basic).`;
+    }
+    return hadCredentials
+      ? "The feed rejected that username and password."
+      : "This feed is password protected. Turn on \u201cThis feed needs a sign-in\u201d and enter the username and password.";
+  }
+  if (status === 403) {
+    return hadCredentials
+      ? "The feed accepted the sign-in but refuses access to this address (403)."
+      : "The feed refused access (403). If it is password protected, turn on \u201cThis feed needs a sign-in\u201d.";
+  }
+  return `The server returned ${status} ${statusText}.`;
+}
+
 /** Opens the feed as a byte stream, whichever way the user pointed at it. */
 async function openSource(
   source: Extract<WorkerRequest, { type: "load" }>["source"],
@@ -110,17 +158,42 @@ async function openSource(
     ? `/api/proxy?url=${encodeURIComponent(source.url)}`
     : source.url;
 
+  /*
+   * The credentials never travel in the query string — that is what would put
+   * a feed password into browser history, the referrer and every access log on
+   * the way. Through the proxy they ride a request header on a same-origin
+   * call (so no preflight, and nothing to log); direct, they are the ordinary
+   * `Authorization` header the feed host asked for.
+   */
+  const headers: Record<string, string> = {};
+  if (source.credentials) {
+    const value = basicAuthHeader(source.credentials);
+    if (source.viaProxy) headers["x-feed-authorization"] = value;
+    else headers.authorization = value;
+  }
+
   let res: Response;
   try {
-    res = await fetch(target, { redirect: "follow" });
+    res = await fetch(target, { redirect: "follow", headers });
   } catch (err) {
     throw new Error(
       source.viaProxy
         ? `Could not reach the address: ${(err as Error).message}`
-        : 'The browser could not read this address directly (CORS). Turn on "Fetch through proxy" and try again.',
+        : source.credentials
+          ? 'The browser could not sign in to this address directly. Sending a password direct needs the host to allow it in CORS, which feed hosts rarely do — turn on "Fetch through proxy" and try again.'
+          : 'The browser could not read this address directly (CORS). Turn on "Fetch through proxy" and try again.',
     );
   }
-  if (!res.ok) throw new Error(`The server returned ${res.status} ${res.statusText}.`);
+  if (!res.ok) {
+    throw new Error(
+      describeFetchFailure(
+        res.status,
+        res.statusText,
+        Boolean(source.credentials),
+        res.headers.get("x-feed-authenticate") ?? res.headers.get("www-authenticate"),
+      ),
+    );
+  }
   if (!res.body) throw new Error("The response body is empty.");
 
   const encoded = res.headers.get("content-encoding");
