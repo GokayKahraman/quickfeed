@@ -6,7 +6,9 @@ import FindBar from "../components/FindBar";
 import QueryBar, { newCondition } from "../components/QueryBar";
 import Tape from "../components/Tape";
 import DocViewer, { type ViewerApi } from "../components/DocViewer";
+import SignInPrompt from "../components/SignInPrompt";
 import {
+  FeedAuthError,
   FeedEngine,
   formatBytes,
   formatCount,
@@ -15,9 +17,27 @@ import {
   triggerDownload,
 } from "../lib/engine";
 import { formatLabel } from "../lib/format/detect";
-import type { DocSummary, FindMatch, FindOptions, LoadProgress, Query } from "../lib/types";
+import type {
+  AuthChallenge,
+  DocSummary,
+  FindMatch,
+  FindOptions,
+  FeedAuth,
+  LoadProgress,
+  Query,
+} from "../lib/types";
 
 type Phase = "intake" | "ready" | "viewing";
+
+type LoadSource = Parameters<FeedEngine["load"]>[0];
+
+/** A feed that asked to be signed in to, held with the attempt that provoked it. */
+type PendingAuth = {
+  source: Extract<LoadSource, { kind: "url" }>;
+  challenge: AuthChallenge;
+  /** Kept so dismissing the prompt still leaves the failure on screen. */
+  message: string;
+};
 
 export default function Page() {
   const engineRef = useRef<FeedEngine | null>(null);
@@ -27,6 +47,7 @@ export default function Page() {
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState<LoadProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [pendingAuth, setPendingAuth] = useState<PendingAuth | null>(null);
 
   const [source, setSource] = useState<DocSummary | null>(null);
   const [result, setResult] = useState<DocSummary | null>(null);
@@ -75,7 +96,7 @@ export default function Page() {
   }, []);
 
   const runLoad = useCallback(
-    async (source_: Parameters<FeedEngine["load"]>[0]) => {
+    async (source_: LoadSource) => {
       const engine = engineRef.current;
       if (!engine) return;
       setBusy(true);
@@ -87,9 +108,19 @@ export default function Page() {
       try {
         const doc = await engine.load(source_, { indent, collapseText }, setProgress);
         setSource(doc);
+        setPendingAuth(null);
         setPhase("ready");
       } catch (err) {
-        setError((err as Error).message);
+        /* A feed asking to be signed in to is a question, not a dead end: it
+           opens the prompt, holding on to the attempt so answering it replays
+           the same fetch rather than making the user rebuild it. */
+        if (err instanceof FeedAuthError && source_.kind === "url") {
+          setPendingAuth({ source: source_, challenge: err.challenge, message: err.message });
+          setError(null);
+        } else {
+          setPendingAuth(null);
+          setError((err as Error).message);
+        }
         setPhase("intake");
       } finally {
         setBusy(false);
@@ -97,6 +128,15 @@ export default function Page() {
       }
     },
     [indent, collapseText],
+  );
+
+  /** Answers the challenge by running the attempt again, the sign-in attached. */
+  const signIn = useCallback(
+    (auth: FeedAuth) => {
+      if (!pendingAuth) return;
+      void runLoad({ ...pendingAuth.source, auth });
+    },
+    [pendingAuth, runLoad],
   );
 
   /* The record tag drives the query, the rail count and the tape, so it is
@@ -283,20 +323,35 @@ export default function Page() {
           </span>
           <span className="rail-note">runs in your browser · nothing is uploaded</span>
         </header>
-        <Intake
-          busy={busy}
-          progress={progress}
-          error={error}
-          indent={indent}
-          collapseText={collapseText}
-          onIndentChange={setIndent}
-          onCollapseChange={setCollapseText}
-          onFile={(file) => runLoad({ kind: "file", file })}
-          onUrl={(url, viaProxy, credentials) =>
-            runLoad({ kind: "url", url, viaProxy, credentials })
-          }
-          onCancel={() => engineRef.current?.cancel()}
-        />
+        {/* While the prompt is up, the form behind it is not just visually
+            covered: `inert` takes it out of the tab order and out of what a
+            screen reader walks, so the sign-in is the only thing there. */}
+        <div className="layer" inert={pendingAuth ? true : undefined}>
+          <Intake
+            busy={busy}
+            progress={progress}
+            error={error}
+            indent={indent}
+            collapseText={collapseText}
+            onIndentChange={setIndent}
+            onCollapseChange={setCollapseText}
+            onFile={(file) => runLoad({ kind: "file", file })}
+            onUrl={(url, viaProxy, auth) => runLoad({ kind: "url", url, viaProxy, auth })}
+            onCancel={() => engineRef.current?.cancel()}
+          />
+        </div>
+        {pendingAuth && (
+          <SignInPrompt
+            url={pendingAuth.source.url}
+            challenge={pendingAuth.challenge}
+            busy={busy}
+            onSubmit={signIn}
+            onCancel={() => {
+              setError(pendingAuth.message);
+              setPendingAuth(null);
+            }}
+          />
+        )}
       </div>
     );
   }

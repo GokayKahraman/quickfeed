@@ -1,4 +1,5 @@
 import type {
+  AuthChallenge,
   DocSummary,
   FeedFormat,
   FindOptions,
@@ -8,6 +9,22 @@ import type {
   WorkerRequest,
   WorkerResponse,
 } from "./types";
+
+/**
+ * The rejection a caller can answer, rather than only report.
+ *
+ * `load` rejects with this when the feed asked to be signed in to, so the page
+ * can put the sign-in in front of the user and run the same load again.
+ */
+export class FeedAuthError extends Error {
+  constructor(
+    message: string,
+    readonly challenge: AuthChallenge,
+  ) {
+    super(message);
+    this.name = "FeedAuthError";
+  }
+}
 
 /** Omit that distributes over the request union instead of collapsing it. */
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
@@ -49,7 +66,13 @@ export class FeedEngine {
       return;
     }
     this.pending.delete(msg.id);
-    if (msg.type === "error") entry.reject(new Error(msg.message));
+    if (msg.type === "error") {
+      entry.reject(
+        msg.authChallenge
+          ? new FeedAuthError(msg.message, msg.authChallenge)
+          : new Error(msg.message),
+      );
+    }
     else entry.resolve(msg as never);
   }
 

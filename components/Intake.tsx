@@ -1,9 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { Credentials, LoadProgress } from "../lib/types";
+import type { FeedAuth, LoadProgress } from "../lib/types";
 import { formatBytes, formatCount } from "../lib/engine";
 import TransformDemo from "./TransformDemo";
+import AuthFields, { authIsFilled } from "./AuthFields";
 
 interface Props {
   busy: boolean;
@@ -14,7 +15,7 @@ interface Props {
   onIndentChange: (v: string) => void;
   onCollapseChange: (v: boolean) => void;
   onFile: (file: File) => void;
-  onUrl: (url: string, viaProxy: boolean, credentials?: Credentials) => void;
+  onUrl: (url: string, viaProxy: boolean, auth?: FeedAuth) => void;
   onCancel: () => void;
 }
 
@@ -63,22 +64,23 @@ function readFeedlinkParam(search: string): string {
  * fields keeps the password out of the box that gets shared, and saves the
  * user from picking the URL apart by hand.
  */
-function splitUserInfo(value: string): { url: string; credentials: Credentials | null } {
+function splitUserInfo(value: string): { url: string; auth: FeedAuth | null } {
   let parsed: URL;
   try {
     parsed = new URL(value);
   } catch {
-    return { url: value, credentials: null };
+    return { url: value, auth: null };
   }
-  if (!parsed.username && !parsed.password) return { url: value, credentials: null };
+  if (!parsed.username && !parsed.password) return { url: value, auth: null };
 
-  const credentials = {
+  const auth: FeedAuth = {
+    type: "basic",
     username: safeDecode(parsed.username),
     password: safeDecode(parsed.password),
   };
   parsed.username = "";
   parsed.password = "";
-  return { url: parsed.toString(), credentials };
+  return { url: parsed.toString(), auth };
 }
 
 function safeDecode(v: string): string {
@@ -88,15 +90,6 @@ function safeDecode(v: string): string {
     return v;
   }
 }
-
-/**
- * Does this failure mean the feed wants a sign-in?
- *
- * Matched against the wording in `lib/worker/feed.worker.ts`; the two move
- * together. Worth the coupling — landing on a 401 with the fields still
- * collapsed leaves the user with nothing to act on.
- */
-const AUTH_FAILURE = /password protected|username and password|sign-in|refused access/i;
 
 export default function Intake({
   busy,
@@ -113,22 +106,18 @@ export default function Intake({
   const [mode, setMode] = useState<"file" | "url">("url");
   const [url, setUrl] = useState("");
   const [viaProxy, setViaProxy] = useState(true);
-  const [needsAuth, setNeedsAuth] = useState(false);
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
-  const [showPassword, setShowPassword] = useState(false);
+  const [auth, setAuth] = useState<FeedAuth>({ type: "none" });
   const [over, setOver] = useState(false);
   const fileInput = useRef<HTMLInputElement | null>(null);
   const fetchBtn = useRef<HTMLButtonElement | null>(null);
 
   /** Takes an address from anywhere, keeping any credentials buried in it. */
   const acceptUrl = useCallback((value: string) => {
-    const { url: clean, credentials } = splitUserInfo(value);
+    const { url: clean, auth: buried } = splitUserInfo(value);
     setUrl(clean);
-    if (!credentials) return;
-    setNeedsAuth(true);
-    setUsername(credentials.username);
-    setPassword(credentials.password);
+    if (!buried) return;
+    setAuth(buried);
+    setViaProxy(true);
   }, []);
 
   useEffect(() => {
@@ -138,12 +127,6 @@ export default function Intake({
       acceptUrl(feedlink);
     }
   }, [acceptUrl]);
-
-  /* A 401 arrives with the fields collapsed on the first try. Opening them is
-     the only useful thing to do with that answer. */
-  useEffect(() => {
-    if (error && AUTH_FAILURE.test(error)) setNeedsAuth(true);
-  }, [error]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -159,15 +142,13 @@ export default function Intake({
     return () => window.clearTimeout(timer);
   }, [url]);
 
-  /* Credentials are read straight off the fields and handed to the fetch. They
-     are never written to storage, to the address bar or to a shareable link —
-     when the tab closes, they are gone. */
+  /* The sign-in is read straight off the fields and handed to the fetch. It is
+     never written to storage, to the address bar or to a shareable link — when
+     the tab closes, it is gone. */
   const submit = () => {
     const address = url.trim();
     if (!address) return;
-    const credentials =
-      needsAuth && (username || password) ? { username, password } : undefined;
-    onUrl(address, viaProxy, credentials);
+    onUrl(address, viaProxy, authIsFilled(auth) ? auth : undefined);
   };
 
   const pct =
@@ -322,65 +303,23 @@ export default function Intake({
                   />
                   Fetch through proxy (when CORS blocks)
                 </label>
-                <label className="toggle">
-                  <input
-                    type="checkbox"
-                    checked={needsAuth}
-                    onChange={(e) => {
-                      setNeedsAuth(e.target.checked);
-                      /* A password sent straight from the browser needs the
-                         feed host to allow the header in CORS, which almost
-                         none do. The proxy is the path that works, so it comes
-                         on with the fields — still a switch, still overridable. */
-                      if (e.target.checked) setViaProxy(true);
-                    }}
-                  />
-                  This feed needs a sign-in
-                </label>
+                <AuthFields
+                  value={auth}
+                  onChange={(next) => {
+                    setAuth(next);
+                    /* A sign-in sent straight from the browser needs the feed
+                       host to allow the header in CORS, which almost none do.
+                       The proxy is the path that works, so it comes on with the
+                       fields — still a switch, still overridable. */
+                    if (next.type !== "none") setViaProxy(true);
+                  }}
+                  onSubmit={submit}
+                />
 
-                {needsAuth && (
-                  <div className="auth-row">
-                    <input
-                      type="text"
-                      placeholder="username"
-                      value={username}
-                      spellCheck={false}
-                      autoComplete="off"
-                      onChange={(e) => setUsername(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") submit();
-                      }}
-                      aria-label="Feed username"
-                    />
-                    <span className="auth-reveal">
-                      <input
-                        type={showPassword ? "text" : "password"}
-                        placeholder="password"
-                        value={password}
-                        spellCheck={false}
-                        autoComplete="off"
-                        onChange={(e) => setPassword(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") submit();
-                        }}
-                        aria-label="Feed password"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setShowPassword((v) => !v)}
-                        aria-pressed={showPassword}
-                        title={showPassword ? "Hide the password" : "Show the password"}
-                      >
-                        {showPassword ? "hide" : "show"}
-                      </button>
-                    </span>
-                  </div>
-                )}
-
-                {needsAuth && (
+                {auth.type !== "none" && (
                   <p className="auth-note">
-                    Sent to the feed host for this one fetch, over the proxy. Not saved,
-                    not put in the address bar, and gone when the tab closes.
+                    Used for this one fetch. Not saved, not put in the address bar, and gone
+                    when the tab closes.
                   </p>
                 )}
 

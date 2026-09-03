@@ -20,9 +20,11 @@ import { formatCsvStream, runCsvQuery, ROW_RECORD } from "../csv/pipeline";
 import { Cancelled, maybeDecompress, peekStream } from "../format/read";
 import { extensionFor, mimeFor, sniffFeed } from "../format/detect";
 import { buildSearchRegex, describeQuery, foldForSearch } from "../xml/match";
+import { authTypeForScheme, packSpec, specFor, unsendableField } from "../auth";
 import type {
+  AuthChallenge,
+  AuthType,
   ColumnInfo,
-  Credentials,
   DocSummary,
   FeedFormat,
   FieldInfo,
@@ -86,18 +88,38 @@ async function releaseAll(): Promise<void> {
 }
 
 /**
- * `Authorization: Basic` value for a username and password.
+ * Thrown when the feed asked to be signed in to.
  *
- * RFC 7617 leaves the encoding to the server but names UTF-8 as the one to
- * use, and `btoa` throws on anything past Latin-1 — so the pair is encoded to
- * bytes first. Passwords with an accented character are common enough that
- * the throw would be a real failure, not a theoretical one.
+ * Separate from a plain failure so the app can tell the difference without
+ * reading the message: one is a dead end, the other is a question the user can
+ * answer.
  */
-function basicAuthHeader({ username, password }: Credentials): string {
-  const bytes = new TextEncoder().encode(`${username}:${password}`);
-  let binary = "";
-  for (const b of bytes) binary += String.fromCharCode(b);
-  return `Basic ${btoa(binary)}`;
+class NeedsCredentials extends Error {
+  constructor(
+    message: string,
+    readonly challenge: AuthChallenge,
+  ) {
+    super(message);
+    this.name = "NeedsCredentials";
+  }
+}
+
+/**
+ * Scheme and realm out of a `WWW-Authenticate` line, both optional in practice.
+ *
+ * Feed APIs very often send no such line at all — a bare 401, or a 403 — and a
+ * bearer token or API key never announces itself even in principle. So a null
+ * scheme is the ordinary case, not a malformed one: it means the app cannot
+ * know, and has to ask.
+ */
+function parseChallenge(
+  header: string | null,
+  rejected: boolean,
+  attempted: AuthType | null,
+): AuthChallenge {
+  const scheme = header?.trim().split(/[\s,]/, 1)[0] || null;
+  const realm = header?.match(/realm\s*=\s*"([^"]*)"/i)?.[1] ?? null;
+  return { scheme, realm, rejected, attempted, suggested: authTypeForScheme(scheme) };
 }
 
 /**
@@ -106,28 +128,35 @@ function basicAuthHeader({ username, password }: Credentials): string {
  * A 401 is the whole reason this path exists, so it never surfaces as a bare
  * status line: it says whether the credentials were wrong or simply missing.
  */
+const SCHEME_LABEL: Record<AuthType, string> = {
+  none: "no sign-in",
+  basic: "username and password",
+  bearer: "bearer token",
+  apikey: "API key",
+};
+
 function describeFetchFailure(
   status: number,
   statusText: string,
-  hadCredentials: boolean,
+  attempted: AuthType | null,
   challenge: string | null,
 ): string {
-  if (status === 401) {
-    /* A host asking for Digest, NTLM or anything else will keep refusing a
-       Basic header forever. Saying so beats letting the user retype a password
-       that was right all along. */
-    const scheme = challenge?.trim().split(/[\s,]/, 1)[0]?.toLowerCase();
-    if (scheme && scheme !== "basic") {
-      return `This feed asks for ${challenge?.trim().split(/[\s,]/, 1)[0]} authentication, which QuickFeed cannot provide — only a username and password (Basic).`;
+  if (status === 401 || status === 403) {
+    /* A host asking for Digest, NTLM or one of the signing schemes will keep
+       refusing whatever this app sends. Naming it beats letting the user retype
+       a password that was right all along. */
+    const named = challenge?.trim().split(/[\s,]/, 1)[0];
+    if (named && !authTypeForScheme(named)) {
+      return `This feed asks for ${named} authentication, which QuickFeed cannot perform. It can send a username and password, a bearer token or an API key.`;
     }
-    return hadCredentials
-      ? "The feed rejected that username and password."
-      : "This feed is password protected. Turn on \u201cThis feed needs a sign-in\u201d and enter the username and password.";
-  }
-  if (status === 403) {
-    return hadCredentials
-      ? "The feed accepted the sign-in but refuses access to this address (403)."
-      : "The feed refused access (403). If it is password protected, turn on \u201cThis feed needs a sign-in\u201d.";
+    if (attempted) {
+      return status === 401
+        ? `The feed rejected that ${SCHEME_LABEL[attempted]}.`
+        : `The feed accepted the ${SCHEME_LABEL[attempted]} but refuses access to this address (403).`;
+    }
+    return status === 401
+      ? "This feed needs a sign-in."
+      : "The feed refused access (403). It may need a sign-in.";
   }
   return `The server returned ${status} ${statusText}.`;
 }
@@ -159,40 +188,70 @@ async function openSource(
     : source.url;
 
   /*
-   * The credentials never travel in the query string — that is what would put
+   * The sign-in never travels in our own query string — that is what would put
    * a feed password into browser history, the referrer and every access log on
-   * the way. Through the proxy they ride a request header on a same-origin
-   * call (so no preflight, and nothing to log); direct, they are the ordinary
-   * `Authorization` header the feed host asked for.
+   * the way. Through the proxy the whole spec rides one request header on a
+   * same-origin call (so no preflight, and nothing to log) and the proxy
+   * applies it upstream; direct, it is applied here.
+   *
+   * An API key the host wants as a query parameter is the one thing that has
+   * to end up in a URL — it is what the API is asking for — but even that is
+   * added by the proxy, so it appears only in the request to the feed host.
    */
-  const headers: Record<string, string> = {};
-  if (source.credentials) {
-    const value = basicAuthHeader(source.credentials);
-    if (source.viaProxy) headers["x-feed-authorization"] = value;
-    else headers.authorization = value;
+  const unsendable = unsendableField(source.auth);
+  if (unsendable) {
+    throw new Error(
+      `That ${unsendable} contains a character an HTTP header cannot carry. Check for a stray character from the paste — keys and tokens are plain ASCII.`,
+    );
   }
+
+  const spec = specFor(source.auth);
+  const headers: Record<string, string> = {};
+  let url = target;
+  if (spec) {
+    if (source.viaProxy) {
+      headers["x-feed-auth"] = packSpec(spec);
+    } else {
+      if (spec.header) headers[spec.header.name] = spec.header.value;
+      if (spec.query) {
+        const u = new URL(source.url);
+        u.searchParams.set(spec.query.name, spec.query.value);
+        url = u.toString();
+      }
+    }
+  }
+
+  const attempted = source.auth && source.auth.type !== "none" ? source.auth.type : null;
 
   let res: Response;
   try {
-    res = await fetch(target, { redirect: "follow", headers });
+    res = await fetch(url, { redirect: "follow", headers });
   } catch (err) {
     throw new Error(
       source.viaProxy
         ? `Could not reach the address: ${(err as Error).message}`
-        : source.credentials
-          ? 'The browser could not sign in to this address directly. Sending a password direct needs the host to allow it in CORS, which feed hosts rarely do — turn on "Fetch through proxy" and try again.'
+        : attempted
+          ? 'The browser could not sign in to this address directly. Sending a sign-in header direct needs the host to allow it in CORS, which feed hosts rarely do — turn on "Fetch through proxy" and try again.'
           : 'The browser could not read this address directly (CORS). Turn on "Fetch through proxy" and try again.',
     );
   }
   if (!res.ok) {
-    throw new Error(
-      describeFetchFailure(
-        res.status,
-        res.statusText,
-        Boolean(source.credentials),
-        res.headers.get("x-feed-authenticate") ?? res.headers.get("www-authenticate"),
-      ),
-    );
+    const header = res.headers.get("x-feed-authenticate") ?? res.headers.get("www-authenticate");
+    const message = describeFetchFailure(res.status, res.statusText, attempted, header);
+
+    /*
+     * A 401 is the plain form of the question. A 403 counts too, but only
+     * before anything was tried: hosts that gate a feed on a sign-in without
+     * bothering with the 401 are common, while a 403 *after* one is usually the
+     * account lacking access, and re-asking would be telling the user to fix
+     * the wrong thing.
+     */
+    const challenge = parseChallenge(header, Boolean(attempted), attempted);
+    const answerable = !challenge.scheme || challenge.suggested !== null;
+    if (answerable && (res.status === 401 || (res.status === 403 && !attempted))) {
+      throw new NeedsCredentials(message, challenge);
+    }
+    throw new Error(message);
   }
   if (!res.body) throw new Error("The response body is empty.");
 
@@ -626,7 +685,12 @@ ctx.onmessage = (ev: MessageEvent<WorkerRequest>) => {
         : err instanceof Error
           ? err.message
           : String(err);
-    post({ id: req.id, type: "error", message });
+    post({
+      id: req.id,
+      type: "error",
+      message,
+      ...(err instanceof NeedsCredentials ? { authChallenge: err.challenge } : {}),
+    });
   });
 };
 
