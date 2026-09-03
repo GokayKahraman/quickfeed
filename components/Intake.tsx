@@ -24,6 +24,36 @@ const PHASE_LABEL: Record<LoadProgress["phase"], string> = {
   query: "Querying",
 };
 
+/** App-owned query keys that may follow an unencoded feed URL. */
+const APP_QUERY_KEYS = ["fetch"];
+
+/**
+ * Read `feedlink` even when the nested feed URL was not encoded.
+ * `URLSearchParams` stops at the first `&`, so
+ * `?feedlink=https://host/path?a=1&type=xml` would otherwise yield only
+ * `https://host/path?a=1`.
+ */
+function readFeedlinkParam(search: string): string {
+  const raw = search.startsWith("?") ? search.slice(1) : search;
+  const marker = raw.startsWith("feedlink=")
+    ? "feedlink="
+    : raw.includes("&feedlink=")
+      ? "&feedlink="
+      : null;
+  if (!marker) return "";
+
+  const after = raw.slice(raw.indexOf(marker) + marker.length);
+  const reserved = APP_QUERY_KEYS.join("|");
+  const cut = after.search(new RegExp(`&(?:${reserved})=`, "i"));
+  const value = cut === -1 ? after : after.slice(0, cut);
+
+  try {
+    return decodeURIComponent(value.replace(/\+/g, " ")).trim();
+  } catch {
+    return value.trim();
+  }
+}
+
 export default function Intake({
   busy,
   progress,
@@ -44,7 +74,7 @@ export default function Intake({
   const fetchBtn = useRef<HTMLButtonElement | null>(null);
 
   useEffect(() => {
-    const feedlink = new URLSearchParams(window.location.search).get("feedlink")?.trim() ?? "";
+    const feedlink = readFeedlinkParam(window.location.search);
     if (feedlink) {
       setMode("url");
       setUrl(feedlink);
@@ -53,7 +83,7 @@ export default function Intake({
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const feedlink = params.get("feedlink")?.trim() ?? "";
+    const feedlink = readFeedlinkParam(window.location.search);
     if (!feedlink || params.get("fetch") !== "true") return;
     if (url.trim() !== feedlink) return;
 
