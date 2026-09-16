@@ -61,6 +61,9 @@ export default function Page() {
     caseSensitive: false,
   }));
   const [viewport, setViewport] = useState({ first: 0, visible: 0 });
+  /* Rows the reader has marked in the table view, by line index. Held here
+     rather than in the viewer so the status bar can report and clear them. */
+  const [selectedRows, setSelectedRows] = useState<Set<number>>(() => new Set());
   /** Set when the user rejects the auto-detected record tag. */
   const [recordOverride, setRecordOverride] = useState<string | null>(null);
 
@@ -269,12 +272,16 @@ export default function Page() {
     };
   }, [activeDocId, findOpen, findQuery, findOptions]);
 
-  // Switching documents invalidates hit positions.
+  // Switching documents invalidates hit positions — and line numbers, so the
+  // marked rows go with them.
   useEffect(() => {
     setHits([]);
     setHitTotal(0);
     setCurrentHit(0);
+    setSelectedRows(new Set());
   }, [activeDocId]);
+
+  const clearSelection = useCallback(() => setSelectedRows(new Set()), []);
 
   const stepHit = useCallback(
     (delta: number) => {
@@ -303,6 +310,8 @@ export default function Page() {
         setFindOpen(true);
       } else if (e.key === "Escape" && findOpen) {
         closeFind();
+      } else if (e.key === "Escape" && selectedRows.size > 0) {
+        clearSelection();
       } else if (e.key === "F3") {
         e.preventDefault();
         stepHit(e.shiftKey ? -1 : 1);
@@ -310,7 +319,7 @@ export default function Page() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [phase, findOpen, closeFind, stepHit]);
+  }, [phase, findOpen, closeFind, stepHit, selectedRows, clearSelection]);
 
   /* ---------------------------------------------------------------- intake */
 
@@ -574,6 +583,8 @@ export default function Page() {
           format={doc.format}
           delimiter={doc.delimiter}
           columns={doc.columns}
+          selected={selectedRows}
+          onSelectedChange={setSelectedRows}
           emptyMessage={{
             title: "No matching records",
             detail: `Loosen the condition, or check the ${
@@ -591,6 +602,14 @@ export default function Page() {
         <span>{formatCount(doc.recordCount)} records</span>
         {result && activeKind === "source" && (
           <span className="live">◆ {formatCount(result.recordCount)} matches marked</span>
+        )}
+        {selectedRows.size > 0 && (
+          <span className="sel">
+            ▣ {formatCount(selectedRows.size)} row{selectedRows.size === 1 ? "" : "s"} selected
+            <button type="button" onClick={clearSelection}>
+              clear
+            </button>
+          </span>
         )}
         {findOpen && hitTotal > 0 && (
           <span className="live">

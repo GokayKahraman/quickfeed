@@ -1,6 +1,13 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useReducer, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useReducer,
+  useRef,
+  useState,
+} from "react";
 import type { FeedEngine } from "../lib/engine";
 import { formatCount } from "../lib/engine";
 import { applyHits, highlightLine, type Span } from "./highlight";
@@ -27,6 +34,10 @@ interface Props {
   delimiter?: string;
   /** Column names and widths, when the document is a table. */
   columns?: ColumnInfo[];
+  /** Rows the reader has marked, by line index. Table view only. */
+  selected?: ReadonlySet<number>;
+  /** Passing this handler is what makes rows selectable at all. */
+  onSelectedChange?: (next: Set<number>) => void;
 }
 
 const LINE_H = 20;
@@ -173,6 +184,8 @@ export default function DocViewer({
   format = "xml",
   delimiter,
   columns,
+  selected,
+  onSelectedChange,
 }: Props) {
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const headRef = useRef<HTMLDivElement | null>(null);
@@ -199,6 +212,11 @@ export default function DocViewer({
   const [inspect, setInspect] = useState<InspectedCell | null>(null);
 
   const table = format === "csv" && !!delimiter && !!columns?.length;
+  /* Rows are only markable in the table view: there one line is one product,
+     which is the thing a reader actually wants to keep an eye on. */
+  const selectable = table && !!onSelectedChange;
+  /** Row a shift-click measures its range from, and the keyboard's cursor. */
+  const anchor = useRef<number | null>(null);
   const widthOf = (ci: number) => widths[ci] ?? columns?.[ci]?.width ?? ORPHAN_COL_WIDTH;
 
   /**
@@ -286,6 +304,9 @@ export default function DocViewer({
   const openCell = (e: React.MouseEvent<HTMLElement>, index: number, text: string) => {
     const selection = window.getSelection();
     if (selection && !selection.isCollapsed) return;
+    // Held modifiers mean the click is aimed at the row marks, not at the
+    // value — a cut-off cell must not be a hole in the selection gestures.
+    if (e.ctrlKey || e.metaKey || e.shiftKey) return;
     const r = e.currentTarget.getBoundingClientRect();
     setInspect({
       column: columns?.[index]?.name ?? `column ${index + 1}`,
@@ -339,6 +360,7 @@ export default function DocViewer({
     setGutterRight(el.offsetWidth - el.clientWidth);
     setWidths({});
     setInspect(null);
+    anchor.current = null;
   }, [docId]);
 
   const rows = Math.max(1, Math.ceil(height / LINE_H) + 1);
@@ -350,21 +372,24 @@ export default function DocViewer({
 
   const getLine = useLineCache(engine, docId, first, rows);
 
+  const scrollToLine = useCallback(
+    (line: number, opts?: { center?: boolean }) => {
+      const el = scrollerRef.current;
+      if (!el) return;
+      // Stepping through find hits reads better with the hit in the middle
+      // than pinned to the top edge.
+      const wanted = opts?.center ? line - Math.floor(rows / 2) : line;
+      const clamped = Math.max(0, Math.min(wanted, maxFirst));
+      const target = maxFirst > 0 ? (clamped / maxFirst) * maxScroll : 0;
+      el.scrollTop = target;
+      setScrollTop(target);
+    },
+    [maxFirst, maxScroll, rows],
+  );
+
   useEffect(() => {
-    apiRef.current = {
-      scrollToLine: (line: number, opts) => {
-        const el = scrollerRef.current;
-        if (!el) return;
-        // Stepping through find hits reads better with the hit in the middle
-        // than pinned to the top edge.
-        const wanted = opts?.center ? line - Math.floor(rows / 2) : line;
-        const clamped = Math.max(0, Math.min(wanted, maxFirst));
-        const target = maxFirst > 0 ? (clamped / maxFirst) * maxScroll : 0;
-        el.scrollTop = target;
-        setScrollTop(target);
-      },
-    };
-  }, [apiRef, maxFirst, maxScroll, rows]);
+    apiRef.current = { scrollToLine };
+  }, [apiRef, scrollToLine]);
 
   useEffect(() => {
     onViewport(first, Math.min(rows, lineCount));
@@ -383,6 +408,67 @@ export default function DocViewer({
       }
     }
     return out;
+  };
+
+  /* ------------------------------------------------------------ selection */
+
+  /**
+   * Marks a row from a click.
+   *
+   * The modifiers follow what every file list does: plain click marks one row,
+   * ctrl/cmd adds or removes one, shift takes everything between the last
+   * anchor and here. Line 0 is the feed's own header, so it is never a target.
+   * A plain click that opened a cut-off cell is left alone: reading a long
+   * description should not throw away the marks the reader has built up. With
+   * a modifier held the cell stays shut and the click counts here instead. A
+   * drag that selected text is not a click at all, exactly as `openCell`
+   * reads it.
+   */
+  const clickRow = (line: number, e: React.MouseEvent) => {
+    if (!onSelectedChange || line === 0) return;
+    const bare = !e.ctrlKey && !e.metaKey && !e.shiftKey;
+    if (bare && (e.target as HTMLElement).closest(".cell.clipped")) return;
+    const selection = window.getSelection();
+    const next = new Set(selected ?? []);
+    if (e.shiftKey && anchor.current !== null) {
+      // A shift-click also drags the browser's own text selection across every
+      // row in between, which would bury the mark under it. Dropping the text
+      // selection here rather than blocking the mousedown keeps the click
+      // focusing the viewer, which is what the arrow keys need.
+      selection?.removeAllRanges();
+      next.clear();
+      const from = Math.min(anchor.current, line);
+      const to = Math.max(anchor.current, line);
+      for (let i = Math.max(1, from); i <= to; i++) next.add(i);
+    } else if (selection && !selection.isCollapsed) {
+      return;
+    } else if (e.ctrlKey || e.metaKey) {
+      if (next.has(line)) next.delete(line);
+      else next.add(line);
+      anchor.current = line;
+    } else if (next.size === 1 && next.has(line)) {
+      // Clicking the one marked row again lets go of it.
+      next.clear();
+      anchor.current = null;
+    } else {
+      next.clear();
+      next.add(line);
+      anchor.current = line;
+    }
+    onSelectedChange(next);
+  };
+
+  /** Walks the mark one row at a time, dragging the viewport along with it. */
+  const moveSelection = (delta: number) => {
+    if (!onSelectedChange || lineCount < 2) return;
+    const from = anchor.current ?? first;
+    const line = Math.max(1, Math.min(lineCount - 1, from + delta));
+    anchor.current = line;
+    onSelectedChange(new Set([line]));
+    // One row of margin either side, so the marked row is never flush against
+    // the edge of the window where the next one cannot be read.
+    if (line <= first) scrollToLine(Math.max(0, line - 1));
+    else if (line >= first + rows - 2) scrollToLine(line - rows + 3);
   };
 
   const visible: React.ReactNode[] = [];
@@ -443,16 +529,22 @@ export default function DocViewer({
       );
     }
 
+    const marked = selectable && !!selected?.has(i);
     const cls = [
       "row",
       pending ? "pending" : "",
       table && i === 0 ? "head" : "",
+      marked ? "selected" : "",
     ]
       .filter(Boolean)
       .join(" ");
 
     visible.push(
-      <div className={cls} key={i}>
+      <div
+        className={cls}
+        key={i}
+        onClick={selectable ? (e) => clickRow(i, e) : undefined}
+      >
         <span className="no">{formatCount(i + 1)}</span>
         {body}
       </div>,
@@ -504,6 +596,16 @@ export default function DocViewer({
         className="viewer"
         ref={scrollerRef}
         tabIndex={0}
+        onKeyDown={(e) => {
+          if (!selectable) return;
+          if (e.key === "ArrowDown") {
+            e.preventDefault();
+            moveSelection(1);
+          } else if (e.key === "ArrowUp") {
+            e.preventDefault();
+            moveSelection(-1);
+          }
+        }}
         onScroll={(e) => {
           setScrollTop(e.currentTarget.scrollTop);
           if (inspect) setInspect(null);
