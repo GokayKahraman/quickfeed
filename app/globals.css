@@ -1365,6 +1365,35 @@ select {
   color: var(--cyan);
 }
 
+/* --------------------------------------------------------------------------
+   Marked rows
+
+   A row can be picked out and kept picked out while the reader scrolls, so one
+   product stays findable in a feed of half a million. The mark is cyan and the
+   find hit is red: the two never mean the same thing, so they never share a
+   colour.
+   -------------------------------------------------------------------------- */
+
+.table-mode .row:not(.head) {
+  cursor: pointer;
+}
+.row.selected {
+  background: rgba(127, 214, 236, 0.13);
+}
+.row.selected:hover {
+  background: rgba(127, 214, 236, 0.17);
+}
+/* The line-number gutter is sticky and paints its own background, so it would
+   punch a hole in the mark unless it is tinted to the same blend by hand. */
+.row.selected .no {
+  background: #192a33;
+  color: var(--cyan);
+  box-shadow: inset 3px 0 0 var(--cyan);
+}
+.row.selected .t-cell {
+  color: #eaf5fb;
+}
+
 .empty-view {
   position: absolute;
   inset: 0;
@@ -1406,6 +1435,26 @@ select {
 .status .spacer {
   flex: 1;
 }
+.status .sel {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--cyan);
+}
+.status .sel button {
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--dim);
+  border-radius: var(--r-sm);
+  padding: 1px 7px;
+  font: inherit;
+  cursor: pointer;
+}
+.status .sel button:hover {
+  color: var(--paper);
+  border-color: var(--line-strong);
+}
+
 .status .live {
   color: var(--ok);
 }
