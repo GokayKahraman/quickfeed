@@ -1,5 +1,6 @@
 import type {
   AuthChallenge,
+  BlockResult,
   DocSummary,
   FeedFormat,
   FindOptions,
@@ -121,6 +122,15 @@ export class FeedEngine {
       from,
       count,
     }).then((m) => m.lines);
+  }
+
+  /** The whole element or object the given line belongs to. */
+  block(docId: string, line: number): Promise<BlockResult> {
+    return this.send<Extract<WorkerResponse, { type: "block" }>>({
+      type: "block",
+      docId,
+      line,
+    }).then(({ from, to, text, truncated }) => ({ from, to, text, truncated }));
   }
 
   search(docId: string, query: string, options: FindOptions): Promise<FindResult> {

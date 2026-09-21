@@ -17,6 +17,7 @@ import { formatStream, runQuery } from "../xml/pipeline";
 import { formatJsonStream, runJsonQuery } from "../json/pipeline";
 import { ROOT_ITEM } from "../json/formatter";
 import { formatCsvStream, runCsvQuery, ROW_RECORD } from "../csv/pipeline";
+import { shapeOf, stripIndent } from "../format/block";
 import { Cancelled, maybeDecompress, peekStream } from "../format/read";
 import { extensionFor, mimeFor, sniffFeed } from "../format/detect";
 import { buildSearchRegex, describeQuery, foldForSearch } from "../xml/match";
@@ -48,6 +49,16 @@ const docs = new Map<string, OpenDoc>();
 const SEARCH_BATCH = 4096;
 /** Hits kept for navigation. Beyond this the bar reports the total as "+". */
 const MAX_MATCHES = 20000;
+/** Lines read per batch while feeling for a block's far edge. */
+const BLOCK_BATCH = 2048;
+/**
+ * Ceilings on one copied block.
+ *
+ * A click on the root element of a 3 GB feed asks for the whole document; the
+ * clipboard is not the way to get it, and the download button already is.
+ */
+const MAX_BLOCK_LINES = 200_000;
+const MAX_BLOCK_CHARS = 8 * 1024 * 1024;
 /** Bytes read before the format is decided. One header row is plenty. */
 const SNIFF_BYTES = 64 * 1024;
 const yieldToLoop = () => new Promise<void>((r) => setTimeout(r, 0));
@@ -615,6 +626,109 @@ async function handleSearch(req: Extract<WorkerRequest, { type: "search" }>): Pr
   });
 }
 
+/**
+ * Finds the element or object a line belongs to, and lifts it out whole.
+ *
+ * The bounds are read off the indentation — see `shapeOf` for why that is
+ * exact rather than a guess — which means a click on `<item>` can answer with
+ * its far edge without parsing anything. Clicking the closing line works the
+ * same way in reverse, so the tag at either end of a long record copies it.
+ *
+ * Both the scan and the collection run in batches that yield, because the
+ * block may be a root element holding the entire document.
+ */
+async function handleBlock(req: Extract<WorkerRequest, { type: "block" }>): Promise<void> {
+  const doc = docs.get(req.docId);
+  if (!doc) throw new Error("Document not found.");
+  if (snapshotting) await snapshotting;
+
+  const format = doc.summary.format;
+  const lineCount = doc.index.lineCount;
+  const answer = (from: number, to: number, text: string, truncated: boolean) =>
+    post({ id: req.id, type: "block", from, to, text, truncated });
+
+  if (lineCount === 0) {
+    answer(0, 0, "", false);
+    return;
+  }
+
+  const line = Math.max(0, Math.min(req.line, lineCount - 1));
+  const anchor = shapeOf(doc.reader.lines(line, 1)[0] ?? "", format);
+  let from = line;
+  let to = line;
+  /** Set when the far edge was still out of reach at the cap. */
+  let overrun = false;
+
+  if (anchor.role === "open") {
+    let found = -1;
+    for (let at = line + 1; at < lineCount && found === -1; at += BLOCK_BATCH) {
+      if (at - line > MAX_BLOCK_LINES) {
+        overrun = true;
+        break;
+      }
+      const lines = doc.reader.lines(at, BLOCK_BATCH);
+      for (let i = 0; i < lines.length; i++) {
+        const shape = shapeOf(lines[i], format);
+        if (shape.role === "close" && shape.indent === anchor.indent) {
+          found = at + i;
+          break;
+        }
+      }
+      await yieldToLoop();
+    }
+    // An unterminated element means a truncated feed, not a runaway block:
+    // the open line on its own is all there is to give.
+    if (found !== -1) to = found;
+  } else if (anchor.role === "close") {
+    let found = -1;
+    for (let at = line; at > 0 && found === -1; at -= BLOCK_BATCH) {
+      if (line - at > MAX_BLOCK_LINES) {
+        overrun = true;
+        break;
+      }
+      const start = Math.max(0, at - BLOCK_BATCH);
+      const lines = doc.reader.lines(start, at - start);
+      for (let i = lines.length - 1; i >= 0; i--) {
+        const shape = shapeOf(lines[i], format);
+        if (shape.role === "open" && shape.indent === anchor.indent) {
+          found = start + i;
+          break;
+        }
+      }
+      await yieldToLoop();
+    }
+    if (found !== -1) from = found;
+  }
+
+  if (overrun || to - from + 1 > MAX_BLOCK_LINES) {
+    answer(from, to, "", true);
+    return;
+  }
+
+  const parts: string[] = [];
+  let chars = 0;
+  for (let at = from; at <= to; at += BLOCK_BATCH) {
+    const lines = doc.reader.lines(at, Math.min(BLOCK_BATCH, to - at + 1));
+    for (const raw of lines) {
+      const text = stripIndent(raw, anchor.indent);
+      chars += text.length + 1;
+      if (chars > MAX_BLOCK_CHARS) {
+        answer(from, to, "", true);
+        return;
+      }
+      parts.push(text);
+    }
+    await yieldToLoop();
+  }
+
+  let text = parts.join("\n");
+  // The printer writes a separator at the end of the line it follows, so a
+  // block that is not its parent's last child ends in a comma that would make
+  // the pasted fragment invalid on its own.
+  if (format === "json" && text.endsWith(",")) text = text.slice(0, -1);
+  answer(from, to, text, false);
+}
+
 async function handle(req: WorkerRequest): Promise<void> {
   switch (req.type) {
     case "load":
@@ -638,6 +752,9 @@ async function handle(req: WorkerRequest): Promise<void> {
       });
       return;
     }
+    case "block":
+      await handleBlock(req);
+      return;
     case "search":
       await handleSearch(req);
       return;

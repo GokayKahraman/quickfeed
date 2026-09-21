@@ -1148,6 +1148,40 @@ select {
 .t-cdata { color: #7f93a6; }
 .t-comment { color: #55697c; font-style: italic; }
 
+/*
+   A tag name copies its whole element, so it has to look like something that
+   can be clicked — the rest of the line is plain text and stays that way.
+*/
+.tag-copy {
+  cursor: copy;
+}
+.tag-copy:hover {
+  background: rgba(127, 214, 236, 0.12);
+  border-radius: 2px;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* A word about the copy, where the copy was asked for. */
+.copy-note {
+  position: fixed;
+  z-index: 42;
+  max-width: 232px;
+  padding: 5px 9px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-sm);
+  background: var(--ink-900);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.5);
+  color: var(--paper);
+  font-family: var(--sans);
+  font-size: 11.5px;
+  letter-spacing: 0.01em;
+  pointer-events: none;
+}
+.copy-note.bad {
+  color: var(--warn);
+}
+
 /* JSON syntax */
 .t-num { color: var(--sage); }
 .t-lit { color: var(--sand); font-style: italic; }
