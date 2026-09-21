@@ -76,6 +76,9 @@ type InspectedCell = {
   bottom: number;
 };
 
+/** Transient word about a copy, placed at the tag that was clicked. */
+type CopyNote = { left: number; top: number; text: string; bad: boolean };
+
 /** Drag in progress on a column edge. */
 type ColDrag = { index: number; startX: number; startWidth: number; pxPerCh: number };
 
@@ -210,8 +213,64 @@ export default function DocViewer({
   const [widths, setWidths] = useState<Record<number, number>>({});
   /** The cell whose full value is on screen, when one was clicked open. */
   const [inspect, setInspect] = useState<InspectedCell | null>(null);
+  /** What the last copy did, shown for a moment where it was asked for. */
+  const [note, setNote] = useState<CopyNote | null>(null);
+  const noteTimer = useRef(0);
+
+  const showNote = useCallback(
+    (at: { left: number; top: number }, text: string, bad: boolean) => {
+      window.clearTimeout(noteTimer.current);
+      setNote({ ...at, text, bad });
+      noteTimer.current = window.setTimeout(() => setNote(null), bad ? 2600 : 1400);
+    },
+    [],
+  );
+
+  useEffect(() => () => window.clearTimeout(noteTimer.current), []);
+
+  /**
+   * Copies the element, object or array a tag name belongs to, whole.
+   *
+   * Where the block ends is the worker's to say — it may run to the end of the
+   * document, and the viewer only ever holds the rows on screen. Clicking the
+   * closing tag copies the same block, so either end of a long record works.
+   *
+   * A drag that selected text is not a click, and a held modifier is aimed
+   * somewhere else: both are read exactly as `openCell` reads them.
+   */
+  const copyBlock = async (e: React.MouseEvent<HTMLElement>, line: number) => {
+    if (e.ctrlKey || e.metaKey || e.shiftKey) return;
+    const selection = window.getSelection();
+    if (selection && !selection.isCollapsed) return;
+    // Measured before the first await: React clears `currentTarget` on return.
+    const r = e.currentTarget.getBoundingClientRect();
+    const at = { left: r.left, top: r.bottom + 4 };
+    try {
+      const clipboard = navigator.clipboard;
+      if (!clipboard) {
+        showNote(at, "clipboard unavailable", true);
+        return;
+      }
+      const block = await engine.block(docId, line);
+      if (block.truncated) {
+        showNote(at, "too large to copy — use download", true);
+        return;
+      }
+      await clipboard.writeText(block.text);
+      const n = block.to - block.from + 1;
+      showNote(at, `copied ${formatCount(n)} line${n === 1 ? "" : "s"}`, false);
+    } catch {
+      showNote(at, "could not copy", true);
+    }
+  };
 
   const table = format === "csv" && !!delimiter && !!columns?.length;
+  /* The hover is the whole invitation — a tag name looks like text otherwise,
+     and nothing else on the line offers to be clicked. */
+  const copyHint =
+    format === "json"
+      ? "Click to copy this key and everything inside it"
+      : "Click to copy this element and everything inside it";
   /* Rows are only markable in the table view: there one line is one product,
      which is the thing a reader actually wants to keep an eye on. */
   const selectable = table && !!onSelectedChange;
@@ -360,6 +419,7 @@ export default function DocViewer({
     setGutterRight(el.offsetWidth - el.clientWidth);
     setWidths({});
     setInspect(null);
+    setNote(null);
     anchor.current = null;
   }, [docId]);
 
@@ -520,11 +580,24 @@ export default function DocViewer({
       if (lineHits.length > 0) spans = applyHits(spans, lineHits);
       body = (
         <span className="code">
-          {spans.map((s, k) => (
-            <span className={s.c} key={k}>
-              {s.t}
-            </span>
-          ))}
+          {spans.map((s, k) =>
+            /* A find hit splits a name span into pieces that keep the class as
+               a prefix; every piece still points at the same element. */
+            s.c === "t-name" || s.c.startsWith("t-name ") ? (
+              <span
+                className={`${s.c} tag-copy`}
+                key={k}
+                title={copyHint}
+                onClick={(e) => void copyBlock(e, i)}
+              >
+                {s.t}
+              </span>
+            ) : (
+              <span className={s.c} key={k}>
+                {s.t}
+              </span>
+            ),
+          )}
         </span>
       );
     }
@@ -609,6 +682,7 @@ export default function DocViewer({
         onScroll={(e) => {
           setScrollTop(e.currentTarget.scrollTop);
           if (inspect) setInspect(null);
+          if (note) setNote(null);
           // The column ruler sits outside the scroller so it cannot be covered
           // by the absolutely positioned rows; it is kept in step by hand.
           if (headRef.current) headRef.current.scrollLeft = e.currentTarget.scrollLeft;
@@ -638,6 +712,18 @@ export default function DocViewer({
         )}
       </div>
       {inspect && <CellPopover cell={inspect} onClose={() => setInspect(null)} />}
+      {note && (
+        <div
+          className={note.bad ? "copy-note bad" : "copy-note"}
+          role="status"
+          style={{
+            left: Math.max(8, Math.min(note.left, window.innerWidth - 240)),
+            top: Math.min(note.top, window.innerHeight - 36),
+          }}
+        >
+          {note.text}
+        </div>
+      )}
     </div>
   );
 }

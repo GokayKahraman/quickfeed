@@ -154,6 +154,25 @@ export interface LoadProgress {
   phase: "download" | "format" | "query";
 }
 
+/**
+ * One element, object or array, lifted out of the document whole.
+ *
+ * `text` comes back dedented — the block's own indentation is taken off every
+ * line — because it is on its way to the clipboard, where a fragment pasted
+ * eight levels deep would land eight levels indented.
+ */
+export interface BlockResult {
+  /** First and last line of the block, inclusive. */
+  from: number;
+  to: number;
+  text: string;
+  /**
+   * True when the block was too large to lift and `text` is empty. A partial
+   * copy is worse than none: half an element is not valid XML or JSON.
+   */
+  truncated: boolean;
+}
+
 export type WorkerRequest =
   | {
       id: number;
@@ -165,6 +184,8 @@ export type WorkerRequest =
       collapseText: boolean;
     }
   | { id: number; type: "lines"; docId: string; from: number; count: number }
+  /** The whole element or object the given line belongs to, for copying. */
+  | { id: number; type: "block"; docId: string; line: number }
   | { id: number; type: "query"; docId: string; query: Query; recordName?: string }
   | {
       id: number;
@@ -181,6 +202,7 @@ export type WorkerResponse =
   | { id: number; type: "progress"; progress: LoadProgress }
   | { id: number; type: "doc"; doc: DocSummary }
   | { id: number; type: "lines"; from: number; lines: string[] }
+  | ({ id: number; type: "block" } & BlockResult)
   | ({ id: number; type: "search" } & FindResult)
   | { id: number; type: "snapshot"; blob: Blob; fileName: string }
   | { id: number; type: "done" }
