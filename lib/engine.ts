@@ -27,6 +27,17 @@ export class FeedAuthError extends Error {
   }
 }
 
+/**
+ * `load` rejects with this when a bot-protection wall refused the proxy, so the
+ * page can offer to open the feed in the user's own browser instead.
+ */
+export class FeedBlockedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "FeedBlockedError";
+  }
+}
+
 /** Omit that distributes over the request union instead of collapsing it. */
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
 
@@ -71,7 +82,9 @@ export class FeedEngine {
       entry.reject(
         msg.authChallenge
           ? new FeedAuthError(msg.message, msg.authChallenge)
-          : new Error(msg.message),
+          : msg.blocked
+            ? new FeedBlockedError(msg.message)
+            : new Error(msg.message),
       );
     }
     else entry.resolve(msg as never);

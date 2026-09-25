@@ -9,6 +9,7 @@ import DocViewer, { type ViewerApi } from "../components/DocViewer";
 import SignInPrompt from "../components/SignInPrompt";
 import {
   FeedAuthError,
+  FeedBlockedError,
   FeedEngine,
   formatBytes,
   formatCount,
@@ -47,6 +48,8 @@ export default function Page() {
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState<LoadProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** The address a bot-protection wall kept the proxy from, while that is the error shown. */
+  const [blockedUrl, setBlockedUrl] = useState<string | null>(null);
   const [pendingAuth, setPendingAuth] = useState<PendingAuth | null>(null);
 
   const [source, setSource] = useState<DocSummary | null>(null);
@@ -104,6 +107,7 @@ export default function Page() {
       if (!engine) return;
       setBusy(true);
       setError(null);
+      setBlockedUrl(null);
       setProgress(null);
       setResult(null);
       setActiveKind("source");
@@ -123,6 +127,9 @@ export default function Page() {
         } else {
           setPendingAuth(null);
           setError((err as Error).message);
+          if (err instanceof FeedBlockedError && source_.kind === "url") {
+            setBlockedUrl(source_.url);
+          }
         }
         setPhase("intake");
       } finally {
@@ -340,6 +347,7 @@ export default function Page() {
             busy={busy}
             progress={progress}
             error={error}
+            blockedUrl={error ? blockedUrl : null}
             indent={indent}
             collapseText={collapseText}
             onIndentChange={setIndent}

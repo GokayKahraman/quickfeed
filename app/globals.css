@@ -697,6 +697,22 @@ select {
   font-size: 12.5px;
   line-height: 1.55;
 }
+.alert p {
+  margin: 0;
+}
+.alert .alert-hint {
+  margin-top: 6px;
+  color: rgba(255, 201, 201, 0.72);
+}
+.alert-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+.alert-actions .btn {
+  text-decoration: none;
+}
 
 /* --------------------------------------------------------------------------
    Ready — the fork in the road: download it, or read it here

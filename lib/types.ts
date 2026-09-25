@@ -212,6 +212,8 @@ export type WorkerResponse =
       message: string;
       /** Set when the failure was a feed asking to be signed in to. */
       authChallenge?: AuthChallenge;
+      /** Set when a bot-protection wall refused the proxy, not the feed host. */
+      blocked?: true;
     };
 
 export const OP_LABELS: Record<QueryOp, string> = {
