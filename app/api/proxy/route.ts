@@ -55,6 +55,52 @@ class Refused extends Error {
 
 const MAX_REDIRECTS = 5;
 
+/** Page fragments that only a bot-protection wall serves, never a feed or a login. */
+const BOT_WALL_MARKERS = [
+  "challenge-platform",
+  "cf-chl-",
+  "cf-error-details",
+  "Attention Required! | Cloudflare",
+  "<title>Just a moment...</title>",
+];
+
+/** How much of a refusal page is read looking for those markers. */
+const BOT_WALL_SNIFF_BYTES = 32 * 1024;
+
+/**
+ * Whether the refusal came from a bot-protection wall in front of the feed
+ * rather than from the feed host itself.
+ *
+ * The two look alike from outside — a 403, no challenge line — but mean very
+ * different things: one wants a sign-in, the other wants a browser a human is
+ * sitting at, and a sign-in will never get past it. A feed host whose visitors
+ * open the feed fine can still refuse the proxy this way, because the wall
+ * judges the address a request comes from, and this function runs in a data
+ * centre.
+ *
+ * Cloudflare labels its challenges with `cf-mitigated`; its block pages carry
+ * no such label, so an HTML refusal is read far enough to recognise one.
+ */
+async function isBotWall(res: Response): Promise<boolean> {
+  if (res.headers.get("cf-mitigated")) return true;
+  if (res.status !== 403 && res.status !== 429 && res.status !== 503) return false;
+  if (!res.headers.get("content-type")?.includes("html") || !res.body) return false;
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let text = "";
+  try {
+    while (text.length < BOT_WALL_SNIFF_BYTES) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      text += decoder.decode(value, { stream: true });
+    }
+  } finally {
+    void reader.cancel();
+  }
+  return BOT_WALL_MARKERS.some((marker) => text.includes(marker));
+}
+
 /**
  * Walks the redirect chain by hand, which `redirect: "follow"` cannot be asked
  * to do safely here.
@@ -177,6 +223,21 @@ export async function GET(request: Request): Promise<Response> {
   } catch (err) {
     if (err instanceof Refused) return bad(err.message, err.status);
     return bad(`Could not reach the source: ${(err as Error).message}`, 502);
+  }
+
+  /*
+   * Checked before the sign-in path below, which would otherwise take the
+   * wall's 403 for a feed asking to be signed in to. The body is consumed by
+   * the check, which is fine: nothing past this point is sent on a refusal.
+   */
+  if (!upstream.ok && (await isBotWall(upstream))) {
+    return new Response(
+      `The source's bot protection refused the proxy (${upstream.status} ${upstream.statusText}).`,
+      {
+        status: 502,
+        headers: { "cache-control": "no-store", "x-feed-blocked": "bot-protection" },
+      },
+    );
   }
 
   /*

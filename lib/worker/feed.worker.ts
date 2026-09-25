@@ -246,6 +246,13 @@ async function openSource(
           : 'The browser could not read this address directly (CORS). Turn on "Fetch through proxy" and try again.',
     );
   }
+  if (!res.ok && res.headers.get("x-feed-blocked") === "bot-protection") {
+    /* No sign-in gets past this, so the sign-in box is not offered: the user
+       would be asked for a password the feed never wanted. */
+    throw new Error(
+      "The site's bot protection blocked the proxy — it lets browsers in but not servers. The feed itself does not need a sign-in: open the address in your browser, save it, and load the saved file here instead.",
+    );
+  }
   if (!res.ok) {
     const header = res.headers.get("x-feed-authenticate") ?? res.headers.get("www-authenticate");
     const message = describeFetchFailure(res.status, res.statusText, attempted, header);
