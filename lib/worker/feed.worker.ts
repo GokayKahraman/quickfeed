@@ -116,6 +116,20 @@ class NeedsCredentials extends Error {
 }
 
 /**
+ * Thrown when a bot-protection wall in front of the feed refused the proxy.
+ *
+ * Separate for the same reason: the app has something to offer here too — the
+ * feed opens in the user's own browser, so it can be saved from there and
+ * loaded as a file.
+ */
+class BlockedByWall extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "BlockedByWall";
+  }
+}
+
+/**
  * Scheme and realm out of a `WWW-Authenticate` line, both optional in practice.
  *
  * Feed APIs very often send no such line at all — a bare 401, or a 403 — and a
@@ -249,8 +263,8 @@ async function openSource(
   if (!res.ok && res.headers.get("x-feed-blocked") === "bot-protection") {
     /* No sign-in gets past this, so the sign-in box is not offered: the user
        would be asked for a password the feed never wanted. */
-    throw new Error(
-      "The site's bot protection blocked the proxy — it lets browsers in but not servers. The feed itself does not need a sign-in: open the address in your browser, save it, and load the saved file here instead.",
+    throw new BlockedByWall(
+      "The site's bot protection blocked the proxy — it lets browsers in, but not servers. The feed itself does not need a sign-in.",
     );
   }
   if (!res.ok) {
@@ -814,6 +828,7 @@ ctx.onmessage = (ev: MessageEvent<WorkerRequest>) => {
       type: "error",
       message,
       ...(err instanceof NeedsCredentials ? { authChallenge: err.challenge } : {}),
+      ...(err instanceof BlockedByWall ? { blocked: true as const } : {}),
     });
   });
 };

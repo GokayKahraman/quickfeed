@@ -10,6 +10,8 @@ interface Props {
   busy: boolean;
   progress: LoadProgress | null;
   error: string | null;
+  /** Set when a bot-protection wall kept the proxy from this address. */
+  blockedUrl: string | null;
   indent: string;
   collapseText: boolean;
   onIndentChange: (v: string) => void;
@@ -95,6 +97,7 @@ export default function Intake({
   busy,
   progress,
   error,
+  blockedUrl,
   indent,
   collapseText,
   onIndentChange,
@@ -367,7 +370,39 @@ export default function Intake({
               </label>
             </div>
 
-            {error && <p className="alert">{error}</p>}
+            {error && (
+              <div className="alert">
+                <p>{error}</p>
+                {blockedUrl && (
+                  <>
+                    {/* The wall lets the user's own browser through, so the feed
+                        is fetched there. `download` is only a request: across
+                        origins the browser opens the feed in the new tab instead,
+                        and it is saved from there. */}
+                    <p className="alert-hint">
+                      Your browser can still open it. Download the feed, then load the saved
+                      file here.
+                    </p>
+                    <div className="alert-actions">
+                      <a
+                        className="btn primary"
+                        href={blockedUrl}
+                        download
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        Download the feed ↗
+                      </a>
+                      {mode === "url" && (
+                        <button type="button" className="btn ghost" onClick={() => setMode("file")}>
+                          Load a saved file
+                        </button>
+                      )}
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
           </>
         )}
       </div>
