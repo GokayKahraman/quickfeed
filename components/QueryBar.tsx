@@ -9,7 +9,7 @@ import type {
   Query,
   QueryOp,
 } from "../lib/types";
-import { OP_LABELS } from "../lib/types";
+import { OP_LABELS, VALUELESS_OPS } from "../lib/types";
 import { fieldWord, formatCount, formatMs } from "../lib/engine";
 import { isUsable } from "../lib/xml/match";
 
@@ -165,16 +165,21 @@ export default function QueryBar({
               ))}
             </select>
 
-            <input
-              className="val"
-              type="text"
-              placeholder="value"
-              value={c.value}
-              spellCheck={false}
-              onChange={(e) => update(c.id, { value: e.target.value })}
-              onKeyDown={(e) => e.key === "Enter" && usable && !busy && onApply()}
-              aria-label="Value"
-            />
+            {VALUELESS_OPS.has(c.op) ? (
+              // Keeps the remove button lined up with the rows that have a value.
+              <span className="val-none" aria-hidden="true" />
+            ) : (
+              <input
+                className="val"
+                type="text"
+                placeholder="value"
+                value={c.value}
+                spellCheck={false}
+                onChange={(e) => update(c.id, { value: e.target.value })}
+                onKeyDown={(e) => e.key === "Enter" && usable && !busy && onApply()}
+                aria-label="Value"
+              />
+            )}
 
             <button
               type="button"

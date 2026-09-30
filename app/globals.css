@@ -920,6 +920,9 @@ select {
   flex: 1;
   min-width: 160px;
 }
+.cond .val-none {
+  flex: 1;
+}
 .cond .x {
   width: 28px;
   height: 32px;
