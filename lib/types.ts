@@ -1,4 +1,7 @@
-export type QueryOp = "contains" | "not_contains" | "exact";
+export type QueryOp = "contains" | "not_contains" | "exact" | "empty" | "not_empty";
+
+/** Operators that test the field itself and take no value. */
+export const VALUELESS_OPS: ReadonlySet<QueryOp> = new Set<QueryOp>(["empty", "not_empty"]);
 
 /**
  * Feed shapes the app can open.
@@ -220,4 +223,6 @@ export const OP_LABELS: Record<QueryOp, string> = {
   contains: "contains",
   not_contains: "does not contain",
   exact: "matches exactly",
+  empty: "is empty",
+  not_empty: "is not empty",
 };

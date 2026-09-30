@@ -1,4 +1,5 @@
 import type { Condition, Query } from "../types";
+import { VALUELESS_OPS } from "../types";
 import { MAX_FIELDS_PER_RECORD, MAX_VALUE_CHARS } from "../format/read";
 
 /**
@@ -117,7 +118,8 @@ export function addField(values: RecordValues, key: string, text: string): void 
 }
 
 export function isUsable(c: Condition): boolean {
-  return c.tag.trim().length > 0 && c.value.trim().length > 0;
+  if (c.tag.trim().length === 0) return false;
+  return VALUELESS_OPS.has(c.op) || c.value.trim().length > 0;
 }
 
 function testOne(values: RecordValues, c: Condition, caseSensitive: boolean): boolean {
@@ -132,6 +134,12 @@ function testOne(values: RecordValues, c: Condition, caseSensitive: boolean): bo
       return !raw.some((v) => norm(v).includes(needle));
     case "exact":
       return raw.some((v) => norm(v.trim()) === needle);
+    // Blank values are never recorded (see `addField`), so a missing field and
+    // one holding only whitespace both count as empty.
+    case "empty":
+      return raw.length === 0;
+    case "not_empty":
+      return raw.length > 0;
   }
 }
 
@@ -152,8 +160,12 @@ export function describeQuery(query: Query): string {
     contains: "⊃",
     not_contains: "⊅",
     exact: "=",
+    empty: "is empty",
+    not_empty: "is not empty",
   };
   return active
-    .map((c) => `${c.tag} ${labels[c.op]} ${c.value}`)
+    .map((c) =>
+      VALUELESS_OPS.has(c.op) ? `${c.tag} ${labels[c.op]}` : `${c.tag} ${labels[c.op]} ${c.value}`,
+    )
     .join(query.combinator === "AND" ? " and " : " or ");
 }
