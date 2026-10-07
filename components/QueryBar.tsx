@@ -11,7 +11,8 @@ import type {
 } from "../lib/types";
 import { OP_LABELS, VALUELESS_OPS } from "../lib/types";
 import { fieldWord, formatCount, formatMs } from "../lib/engine";
-import { isUsable } from "../lib/xml/match";
+import { isRunnable } from "../lib/xml/match";
+import TagPicker from "./TagPicker";
 
 interface Props {
   query: Query;
@@ -27,6 +28,8 @@ interface Props {
   /** What detection guessed, for the "not this one?" hint. */
   recordAuto: string | null;
   recordCandidates: FieldInfo[];
+  /** Fields directly inside the record in use, for "show only". */
+  recordFields: FieldInfo[];
   recordCount: number;
   onRecordChange: (name: string) => void;
   format: FeedFormat;
@@ -49,6 +52,7 @@ export default function QueryBar({
   recordName,
   recordAuto,
   recordCandidates,
+  recordFields,
   recordCount,
   onRecordChange,
   format,
@@ -58,7 +62,8 @@ export default function QueryBar({
   // A table has exactly one thing a record could be — the row — so there is
   // nothing to choose and the picker would only be noise.
   const showRecordPicker = format !== "csv";
-  const usable = query.conditions.some(isUsable);
+  const usable = isRunnable(query);
+  const { showOnly } = query;
   const overridden = !!recordName && !!recordAuto && recordName !== recordAuto;
 
   // Detection can be wrong, so the chosen tag is always offered even when it
@@ -119,6 +124,35 @@ export default function QueryBar({
         </span>
       </div>
       )}
+
+      <div className="show-only-row">
+        <label
+          className="toggle"
+          title={`Keep only the chosen ${noun}s inside each record of the result`}
+        >
+          <input
+            type="checkbox"
+            checked={showOnly.enabled}
+            onChange={(e) =>
+              onChange({ ...query, showOnly: { ...showOnly, enabled: e.target.checked } })
+            }
+          />
+          Show only
+        </label>
+        {showOnly.enabled && (
+          <TagPicker
+            options={recordFields}
+            selected={showOnly.tags}
+            onChange={(tags) => onChange({ ...query, showOnly: { ...showOnly, tags } })}
+            noun={noun}
+            emptyNote={
+              recordName
+                ? `no ${noun}s found inside ${format === "csv" ? "a row" : recordName}`
+                : "pick a record first"
+            }
+          />
+        )}
+      </div>
 
       <div className="query-rows">
         {query.conditions.map((c, i) => (

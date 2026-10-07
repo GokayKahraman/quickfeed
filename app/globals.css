@@ -889,6 +889,170 @@ select {
   text-underline-offset: 2px;
 }
 
+/* "Show only": a switch, then a searchable multi-pick of the record's fields. */
+.show-only-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding-bottom: 9px;
+  margin-bottom: 2px;
+  border-bottom: 1px solid var(--line-soft);
+}
+.show-only-row > .toggle {
+  height: 32px;
+  flex: none;
+}
+.tagpick {
+  position: relative;
+  flex: 1;
+  min-width: 260px;
+  max-width: 760px;
+}
+.tagpick-box {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  min-height: 32px;
+  padding: 3px 6px;
+  background: var(--ink-950);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  cursor: text;
+  transition: border-color 0.14s;
+}
+.tagpick-box:hover {
+  border-color: var(--line-strong);
+}
+.tagpick-box:focus-within {
+  border-color: var(--signal);
+}
+.tagpick-box input[type="text"] {
+  flex: 1;
+  min-width: 120px;
+  height: 24px;
+  padding: 0 4px;
+  border: 0;
+  background: transparent;
+}
+.tagpick-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 22px;
+  padding: 0 2px 0 7px;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--cyan);
+  background: var(--ink-840);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-sm);
+}
+.tagpick-chip button {
+  width: 18px;
+  height: 18px;
+  line-height: 1;
+  font-size: 14px;
+  color: var(--faint);
+  border-radius: 3px;
+}
+.tagpick-chip button:hover {
+  color: var(--signal);
+  background: var(--ink-800);
+}
+.tagpick-pop {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  background: var(--ink-900);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-sm);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
+  overflow: hidden;
+}
+.tagpick-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  font-size: 11.5px;
+  color: var(--faint);
+  border-bottom: 1px solid var(--line-soft);
+}
+.tagpick-head .spacer {
+  flex: 1;
+}
+.tagpick-head button {
+  font-size: 11.5px;
+  color: var(--signal);
+}
+.tagpick-head button:disabled {
+  color: var(--faint);
+  cursor: default;
+}
+.tagpick-list {
+  list-style: none;
+  margin: 0;
+  padding: 4px 0;
+  max-height: 280px;
+  overflow-y: auto;
+}
+.tagpick-opt {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  color: var(--paper);
+  cursor: pointer;
+}
+.tagpick-opt.active {
+  background: var(--ink-840);
+}
+.tagpick-check {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+  color: var(--signal);
+  border: 1px solid var(--line-strong);
+  border-radius: 3px;
+}
+.tagpick-opt[aria-selected="true"] .tagpick-check {
+  border-color: var(--signal);
+  background: var(--signal-glow);
+}
+.tagpick-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--cyan);
+}
+.tagpick-kind {
+  font-size: 10.5px;
+  color: var(--faint);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 0 4px;
+}
+.tagpick-count {
+  font-size: 11.5px;
+  color: var(--faint);
+}
+.tagpick-empty {
+  padding: 8px 10px;
+  font-size: 12px;
+  color: var(--faint);
+}
+
 .query-rows {
   display: flex;
   flex-direction: column;

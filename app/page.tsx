@@ -62,6 +62,7 @@ export default function Page() {
     conditions: [newCondition()],
     combinator: "AND",
     caseSensitive: false,
+    showOnly: { enabled: false, tags: [] },
   }));
   const [viewport, setViewport] = useState({ first: 0, visible: 0 });
   /* Rows the reader has marked in the table view, by line index. Held here
@@ -112,6 +113,8 @@ export default function Page() {
       setResult(null);
       setActiveKind("source");
       setRecordOverride(null);
+      // Fields picked for the last feed mean nothing in the next one.
+      setQuery((q) => ({ ...q, showOnly: { ...q.showOnly, tags: [] } }));
       try {
         const doc = await engine.load(source_, { indent, collapseText }, setProgress);
         setSource(doc);
@@ -157,6 +160,8 @@ export default function Page() {
   const changeRecord = useCallback(
     (name: string) => {
       setRecordOverride(name);
+      // Picked fields belonged to the old record; the switch stays as it was.
+      setQuery((q) => ({ ...q, showOnly: { ...q.showOnly, tags: [] } }));
       // The old result was filtered on a different tag; it no longer applies.
       const engine = engineRef.current;
       if (engine && result) void engine.release(result.id);
@@ -207,7 +212,12 @@ export default function Page() {
     setPhase("intake");
     setError(null);
     setRecordOverride(null);
-    setQuery({ conditions: [newCondition()], combinator: "AND", caseSensitive: false });
+    setQuery({
+      conditions: [newCondition()],
+      combinator: "AND",
+      caseSensitive: false,
+      showOnly: { enabled: false, tags: [] },
+    });
   }, []);
 
   const queryProgress = busy && progress?.phase === "query" ? progress : null;
@@ -542,6 +552,7 @@ export default function Page() {
         recordName={effectiveRecord}
         recordAuto={source.recordAuto}
         recordCandidates={source.recordCandidates}
+        recordFields={(effectiveRecord && source.recordChildren[effectiveRecord]) || []}
         recordCount={recordInfo?.count ?? 0}
         onRecordChange={changeRecord}
         format={source.format}

@@ -146,9 +146,18 @@ export interface NameStat {
   minDepth: number;
   /** First parent this name was seen under; feeds are regular enough for one. */
   parent: string | null;
+  /** Direct child names and how often each appeared, in first-seen order. */
+  children: Map<string, ChildStat>;
+}
+
+interface ChildStat {
+  count: number;
+  hasChildren: boolean;
 }
 
 const MAX_TRACKED_NAMES = 5000;
+/** A record with more distinct fields than this is not one worth listing. */
+const MAX_CHILDREN_PER_NAME = 512;
 
 /**
  * Walks the same token stream as the printer and works out the document's
@@ -161,6 +170,8 @@ export class ShapeCollector {
   elementCount = 0;
   maxDepth = 0;
   private stack: string[] = [];
+  /** The child entry each open element was counted under, so a grandchild can mark it. */
+  private childStack: (ChildStat | null)[] = [];
 
   /** Nesting depth of the element that would open next; the root sits at 0. */
   get depth(): number {
@@ -171,9 +182,20 @@ export class ShapeCollector {
     if (tok.t === "open") {
       const depth = this.stack.length;
       if (depth === 0 && this.rootName === null) this.rootName = tok.name;
+      let child: ChildStat | null = null;
       if (depth > 0) {
         const parent = this.names.get(this.stack[depth - 1]);
-        if (parent) parent.hasChildren = true;
+        if (parent) {
+          parent.hasChildren = true;
+          child = parent.children.get(tok.name) ?? null;
+          if (child) child.count++;
+          else if (parent.children.size < MAX_CHILDREN_PER_NAME) {
+            child = { count: 1, hasChildren: false };
+            parent.children.set(tok.name, child);
+          }
+        }
+        const above = this.childStack[depth - 1];
+        if (above) above.hasChildren = true;
       }
       const stat = this.names.get(tok.name);
       if (stat) {
@@ -185,15 +207,20 @@ export class ShapeCollector {
           hasChildren: false,
           minDepth: depth,
           parent: depth > 0 ? this.stack[depth - 1] : null,
+          children: new Map(),
         });
       }
       this.elementCount++;
       if (!tok.selfClose) {
         this.stack.push(tok.name);
+        this.childStack.push(child);
         if (this.stack.length > this.maxDepth) this.maxDepth = this.stack.length;
       }
     } else if (tok.t === "close") {
-      if (this.stack.length > 0) this.stack.pop();
+      if (this.stack.length > 0) {
+        this.stack.pop();
+        this.childStack.pop();
+      }
     }
   }
 
@@ -261,6 +288,27 @@ export class ShapeCollector {
       depth,
       container,
     }));
+  }
+
+  /** Fields directly inside `name`, in the order the document first used them. */
+  childrenOf(name: string): FieldInfo[] {
+    const stat = this.names.get(name);
+    if (!stat) return [];
+    const depth = stat.minDepth + 1;
+    return [...stat.children].map(([child, c]) => ({
+      name: child,
+      count: c.count,
+      depth,
+      container: c.hasChildren,
+    }));
+  }
+
+  /** `childrenOf` for every record candidate, plus `extra` when it is not one. */
+  recordChildren(candidates: FieldInfo[], extra: string | null): Record<string, FieldInfo[]> {
+    const out: Record<string, FieldInfo[]> = {};
+    for (const c of candidates) out[c.name] = this.childrenOf(c.name);
+    if (extra && !out[extra]) out[extra] = this.childrenOf(extra);
+    return out;
   }
 
   /** Field names for the query bar, most frequent first. */

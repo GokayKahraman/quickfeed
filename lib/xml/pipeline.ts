@@ -3,7 +3,7 @@ import { PrettyPrinter, ShapeCollector, type FormatOptions } from "./formatter";
 import { DensityHistogram, DocWriter } from "../store/document";
 import type { BackingStore } from "../store/backing";
 import type { LoadProgress, Query } from "../types";
-import { compileQuery, type RecordValues } from "./match";
+import { compileQuery, showOnlyTags, type RecordValues } from "./match";
 
 import {
   MAX_FIELDS_PER_RECORD,
@@ -102,6 +102,7 @@ export async function runQuery(opts: {
   const { source, recordName, query, format, out, onProgress, shouldCancel } = opts;
   const predicate = compileQuery(query);
   if (!predicate) throw new Error("Empty query: fill in the tag and value fields.");
+  const keep = showOnlyTags(query);
 
   const tokenizer = new XmlTokenizer();
   const captureBuf: string[] = [];
@@ -120,6 +121,11 @@ export async function runQuery(opts: {
   let sourceLine = 0;
   let matched = 0;
   let scanned = 0;
+  /**
+   * Nesting inside a record field "show only" leaves out. The field is still
+   * read for the conditions — it is only kept out of the printed record.
+   */
+  let hiddenDepth = 0;
 
   const emit = (tok: Token) => {
     if (!capturing && tok.t === "open" && !tok.selfClose && tok.name === recordName) {
@@ -129,10 +135,27 @@ export async function runQuery(opts: {
       textStack.length = 0;
       values = new Map();
       recordSourceLine = sourceLine;
+      hiddenDepth = 0;
       printer.sink = capSink;
     }
 
-    printer.feed(tok);
+    // A direct child of the record (one name on the stack: the record's own)
+    // that is not on the list starts a stretch the printer never sees.
+    if (
+      keep &&
+      capturing &&
+      hiddenDepth === 0 &&
+      tok.t === "open" &&
+      nameStack.length === 1 &&
+      !keep.has(tok.name)
+    ) {
+      if (!tok.selfClose) hiddenDepth = 1;
+    } else if (hiddenDepth > 0) {
+      if (tok.t === "open" && !tok.selfClose) hiddenDepth++;
+      else if (tok.t === "close") hiddenDepth--;
+    } else {
+      printer.feed(tok);
+    }
     sourceLine += countNewlines(tok.raw);
 
     if (!capturing) return;

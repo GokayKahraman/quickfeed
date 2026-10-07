@@ -143,9 +143,27 @@ function testOne(values: RecordValues, c: Condition, caseSensitive: boolean): bo
   }
 }
 
+/**
+ * The fields a result keeps, or null when every field is kept.
+ *
+ * The switch alone does nothing: with no field picked there is nothing to
+ * narrow to, and an empty record would be no use to anyone.
+ */
+export function showOnlyTags(query: Query): Set<string> | null {
+  const { showOnly } = query;
+  if (!showOnly?.enabled || showOnly.tags.length === 0) return null;
+  return new Set(showOnly.tags);
+}
+
+/** True when the query would change anything: a condition, or fields to keep. */
+export function isRunnable(query: Query): boolean {
+  return query.conditions.some(isUsable) || showOnlyTags(query) !== null;
+}
+
 export function compileQuery(query: Query): ((values: RecordValues) => boolean) | null {
   const active = query.conditions.filter(isUsable);
-  if (active.length === 0) return null;
+  // Picking fields with no condition is a reshape of every record.
+  if (active.length === 0) return showOnlyTags(query) ? () => true : null;
   const cs = query.caseSensitive;
   if (query.combinator === "AND") {
     return (values) => active.every((c) => testOne(values, c, cs));
@@ -155,7 +173,9 @@ export function compileQuery(query: Query): ((values: RecordValues) => boolean) 
 
 export function describeQuery(query: Query): string {
   const active = query.conditions.filter(isUsable);
-  if (active.length === 0) return "no filter";
+  const kept = showOnlyTags(query);
+  const only = kept ? `only ${[...kept].join(", ")}` : "";
+  if (active.length === 0) return only || "no filter";
   const labels: Record<Condition["op"], string> = {
     contains: "⊃",
     not_contains: "⊅",
@@ -167,5 +187,6 @@ export function describeQuery(query: Query): string {
     .map((c) =>
       VALUELESS_OPS.has(c.op) ? `${c.tag} ${labels[c.op]}` : `${c.tag} ${labels[c.op]} ${c.value}`,
     )
-    .join(query.combinator === "AND" ? " and " : " or ");
+    .join(query.combinator === "AND" ? " and " : " or ")
+    .concat(only ? ` · ${only}` : "");
 }

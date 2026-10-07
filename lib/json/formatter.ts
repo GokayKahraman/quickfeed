@@ -356,4 +356,8 @@ export class JsonShape {
   fieldNames(limit?: number): FieldInfo[] {
     return this.collector.fieldNames(limit);
   }
+
+  recordChildren(candidates: FieldInfo[], extra: string | null): Record<string, FieldInfo[]> {
+    return this.collector.recordChildren(candidates, extra);
+  }
 }

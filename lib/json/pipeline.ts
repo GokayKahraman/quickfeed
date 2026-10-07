@@ -1,6 +1,6 @@
 import { JsonTokenizer, type JsonToken } from "./tokenizer";
 import { JsonCursor, JsonPrinter, JsonShape } from "./formatter";
-import { addField, compileQuery, type RecordValues } from "../xml/match";
+import { addField, compileQuery, showOnlyTags, type RecordValues } from "../xml/match";
 import { DensityHistogram, DocWriter } from "../store/document";
 import type { BackingStore } from "../store/backing";
 import type { LoadProgress, Query } from "../types";
@@ -134,6 +134,43 @@ class JsonValues {
   }
 }
 
+/**
+ * Drops the record's own keys that are not in `keep`, keeping each surviving
+ * value whole.
+ *
+ * Works on the token list rather than the printed text so the commas between
+ * members are rebuilt, not patched — the same reason the result is a fresh
+ * array. A record that is an array has no keys to choose from and is kept as
+ * it is.
+ */
+function keepMembers(tokens: JsonToken[], keep: Set<string>): JsonToken[] {
+  if (tokens.length < 2 || tokens[0].t !== "{") return tokens;
+  const out: JsonToken[] = [tokens[0]];
+  let member: JsonToken[] = [];
+  let depth = 0;
+  const flush = () => {
+    const key = member[0];
+    if (key?.t === "string" && keep.has(key.value)) {
+      if (out.length > 1) out.push({ t: "," });
+      out.push(...member);
+    }
+    member = [];
+  };
+  for (let i = 1; i < tokens.length - 1; i++) {
+    const tok = tokens[i];
+    if (depth === 0 && tok.t === ",") {
+      flush();
+      continue;
+    }
+    if (tok.t === "{" || tok.t === "[") depth++;
+    else if (tok.t === "}" || tok.t === "]") depth--;
+    member.push(tok);
+  }
+  flush();
+  out.push(tokens[tokens.length - 1]);
+  return out;
+}
+
 export interface JsonQueryResult {
   matched: number;
   scanned: number;
@@ -164,6 +201,7 @@ export async function runJsonQuery(opts: {
   const { source, recordName, query, indent, out, onProgress, shouldCancel } = opts;
   const predicate = compileQuery(query);
   if (!predicate) throw new Error("Empty query: fill in the field and value boxes.");
+  const keep = showOnlyTags(query);
 
   const tokenizer = new JsonTokenizer();
   const cursor = new JsonCursor();
@@ -185,7 +223,7 @@ export async function runJsonQuery(opts: {
     if (predicate(collector.values)) {
       const pieces: string[] = [];
       const printer = new JsonPrinter((s) => pieces.push(s), indent);
-      for (const tok of capture) printer.feed(tok);
+      for (const tok of keep ? keepMembers(capture, keep) : capture) printer.feed(tok);
       printer.finish();
 
       out.write(matched === 0 ? "[\n" : ",\n");
@@ -206,7 +244,12 @@ export async function runJsonQuery(opts: {
 
   const emit = (tok: JsonToken) => {
     const opens = tok.t === "{" || tok.t === "[";
-    if (!capturing && opens && cursor.opensRecord(recordName)) {
+    // Only an object can start a record. The array in `"products": [{…}]`
+    // answers to the same name as its items — that is what makes the items
+    // read as `products` — so letting `[` open one would swallow the whole
+    // list as a single record. Records are counted the same way: `JsonShape`
+    // only treats `{` as an element.
+    if (!capturing && tok.t === "{" && cursor.opensRecord(recordName)) {
       capturing = true;
       captureDepth = 0;
       capture.length = 0;
