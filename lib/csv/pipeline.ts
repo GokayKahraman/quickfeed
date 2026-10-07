@@ -1,5 +1,5 @@
 import { CsvTokenizer, encodeRow, flattenCell, sanitizeHeaders } from "./tokenizer";
-import { addField, compileQuery, type RecordValues } from "../xml/match";
+import { addField, compileQuery, showOnlyTags, type RecordValues } from "../xml/match";
 import { DensityHistogram, DocWriter } from "../store/document";
 import type { BackingStore } from "../store/backing";
 import type { ColumnInfo, FieldInfo, LoadProgress, Query } from "../types";
@@ -167,13 +167,18 @@ export async function runCsvQuery(opts: {
   const { source, delimiter, query, out, onProgress, shouldCancel } = opts;
   const predicate = compileQuery(query);
   if (!predicate) throw new Error("Empty query: fill in the field and value boxes.");
+  const keep = showOnlyTags(query);
 
   const tokenizer = new CsvTokenizer(delimiter);
   const resultHistogram = new DensityHistogram();
   const matchHistogram = new DensityHistogram();
   let headers: string[] | null = null;
+  /** Columns "show only" keeps, in table order; null keeps every cell. */
+  let kept: number[] | null = null;
   let matched = 0;
   let scanned = 0;
+
+  const project = (row: string[]) => (kept ? kept.map((i) => row[i] ?? "") : row);
 
   const emit = (row: string[], startLine: number) => {
     if (!headers) {
@@ -181,7 +186,8 @@ export async function runCsvQuery(opts: {
       // condition resolves against identical to the ones the field list
       // offers, even if the header line reaching here was never normalised.
       headers = sanitizeHeaders(row);
-      out.write(encodeRow(headers, delimiter) + "\n");
+      if (keep) kept = headers.flatMap((h, i) => (keep.has(h) ? [i] : []));
+      out.write(encodeRow(project(headers), delimiter) + "\n");
       return;
     }
     scanned++;
@@ -189,7 +195,7 @@ export async function runCsvQuery(opts: {
     matched++;
     resultHistogram.add(out.line() + 1);
     matchHistogram.add(startLine);
-    out.write(encodeRow(row, delimiter) + "\n");
+    out.write(encodeRow(project(row), delimiter) + "\n");
   };
 
   const total = source.size;

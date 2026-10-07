@@ -20,7 +20,7 @@ import { formatCsvStream, runCsvQuery, ROW_RECORD } from "../csv/pipeline";
 import { shapeOf, stripIndent } from "../format/block";
 import { Cancelled, maybeDecompress, peekStream } from "../format/read";
 import { extensionFor, mimeFor, sniffFeed } from "../format/detect";
-import { buildSearchRegex, describeQuery, foldForSearch } from "../xml/match";
+import { buildSearchRegex, describeQuery, foldForSearch, showOnlyTags } from "../xml/match";
 import { authTypeForScheme, packSpec, specFor, unsendableField } from "../auth";
 import type {
   AuthChallenge,
@@ -315,6 +315,7 @@ interface Formatted {
   /** Nesting level of the record, for picking the right density curve. */
   recordDepth: number;
   recordCandidates: FieldInfo[];
+  recordChildren: Record<string, FieldInfo[]>;
   fields: FieldInfo[];
   depthHistograms: DensityHistogram[];
   bytesRead: number;
@@ -348,6 +349,7 @@ async function formatByKind(
       recordCount: shape.recordCount,
       recordDepth: 1,
       recordCandidates: shape.recordCandidates,
+      recordChildren: { [ROW_RECORD]: shape.fields },
       fields: shape.fields,
       depthHistograms: [histogram],
       bytesRead,
@@ -367,12 +369,14 @@ async function formatByKind(
     });
     const recordName = shape.recordName() ?? ROOT_ITEM;
     const stat = shape.names.get(recordName);
+    const recordCandidates = shape.recordCandidates();
     return {
       rootName: shape.rootName,
       recordName,
       recordCount: stat?.count ?? 0,
       recordDepth: stat?.minDepth ?? 1,
-      recordCandidates: shape.recordCandidates(),
+      recordCandidates,
+      recordChildren: shape.recordChildren(recordCandidates, recordName),
       fields: shape.fieldNames(),
       depthHistograms,
       bytesRead,
@@ -389,12 +393,14 @@ async function formatByKind(
   });
   const recordName = shape.recordName();
   const stat = recordName ? shape.names.get(recordName) : null;
+  const recordCandidates = shape.recordCandidates();
   return {
     rootName: shape.rootName,
     recordName,
     recordCount: stat?.count ?? 0,
     recordDepth: stat?.minDepth ?? 1,
-    recordCandidates: shape.recordCandidates(),
+    recordCandidates,
+    recordChildren: shape.recordChildren(recordCandidates, recordName),
     fields: shape.fieldNames(),
     depthHistograms,
     bytesRead,
@@ -454,6 +460,7 @@ async function handleLoad(req: Extract<WorkerRequest, { type: "load" }>): Promis
     raggedRows: result.raggedRows,
     recordAuto: result.recordName,
     recordCandidates: result.recordCandidates,
+    recordChildren: result.recordChildren,
     fields: result.fields,
     histogram,
     depthHistograms: byDepth,
@@ -547,6 +554,12 @@ async function handleQuery(req: Extract<WorkerRequest, { type: "query" }>): Prom
 
   const index = writer.close();
   const description = describeQuery(req.query);
+  // A table result draws only the columns it kept, so its widths go with them.
+  const kept = showOnlyTags(req.query);
+  const columns =
+    kept && src.summary.columns
+      ? src.summary.columns.filter((c) => kept.has(c.name))
+      : src.summary.columns;
   const summary: DocSummary = {
     id,
     kind: "result",
@@ -562,9 +575,10 @@ async function handleQuery(req: Extract<WorkerRequest, { type: "query" }>): Prom
     recordCount: result.matched,
     format,
     delimiter,
-    columns: src.summary.columns,
+    columns,
     recordAuto: src.summary.recordAuto,
     recordCandidates: src.summary.recordCandidates,
+    recordChildren: src.summary.recordChildren,
     fields: src.summary.fields,
     histogram: result.resultHistogram.finalize(index.lineCount),
     depthHistograms: [],

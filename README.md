@@ -50,12 +50,29 @@ bir sicil elde eder.
 2. **Biçimlendirin** — *Indent* seçeneği (2 spaces / 4 spaces / tab).
 3. **İki seçenek** — *Download formatted file* ya da *View in browser*.
 4. **Sorgulayın** — alan adı + `contains / does not contain / matches exactly` + `value`
+   (ya da değer istemeyen `is empty / is not empty`)
    → **Apply**. Alan kutusunun etiketi biçime göre değişir: XML'de `tag name`, JSON'da
    `key name`, tabloda `column name`. Sonuç yeni bir belge olarak oluşur; *Download
    result* ile alınabilir.
 
 *+ condition* ile koşul eklenir; koşullar arasındaki **AND / OR** bağlacına tıklayarak
 değiştirilir.
+
+### Show only
+
+Record kutusunun altındaki **Show only** anahtarı (varsayılan kapalı) sonuçta her
+kaydın yalnızca seçilen alanlarını bırakır. Açılınca bir kutu belirir; tıklanınca seçili
+kaydın doğrudan içindeki alanlar (XML'de etiketler, JSON'da anahtarlar, tabloda
+sütunlar) belgede ilk görüldükleri sırayla, kaç kez geçtikleriyle listelenir. Liste
+yazarak süzülür ve birden çok alan seçilebilir; liste seçim boyunca açık kalır.
+
+- Seçilen alan bütün olarak korunur: `kategori` seçilirse içindeki `<ana>` ve `<alt>`
+  da gelir.
+- Koşullar gizlenen alanlara da bakar: `stok matches exactly 0` + yalnızca `ad`
+  çalışır.
+- Koşul olmadan da uygulanabilir; o zaman her kayıt yalnızca seçilen alanlarla yazılır.
+- Anahtar açık ama hiç alan seçilmemişse hiçbir şey değişmez.
+- Record değiştirilince ya da yeni dosya açılınca seçim temizlenir.
 
 ## Görüntüleme
 
@@ -136,6 +153,7 @@ Koşullar üç biçimde de aynı motorla değerlendirilir; alanın nereden geldi
 | JSON `null` | Eşleşecek bir değer taşımadığı için alan yokmuş gibi davranır. |
 | Yanlış kayıt | Sorgu barındaki **Record** kutusundan elle seçilir. Tabloda kayıt yalnızca satır olabileceği için bu kutu gösterilmez. |
 | Alan yoksa | `does not contain` doğru, `contains` ve `matches exactly` yanlış kabul edilir. |
+| `is empty` / `is not empty` | Değer istemez. Alan yoksa ya da yalnızca boşluk içeriyorsa boş sayılır. |
 
 ### Sonuç belgesi
 

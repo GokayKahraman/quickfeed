@@ -26,10 +26,23 @@ export interface Condition {
   value: string;
 }
 
+/**
+ * Which of the record's own fields the result keeps.
+ *
+ * Off by default. Turning it on without picking anything changes nothing, so
+ * the switch can be flipped first and the fields chosen after.
+ */
+export interface ShowOnly {
+  enabled: boolean;
+  /** Direct children of the record, by exact name. */
+  tags: string[];
+}
+
 export interface Query {
   conditions: Condition[];
   combinator: "AND" | "OR";
   caseSensitive: boolean;
+  showOnly: ShowOnly;
 }
 
 /**
@@ -111,6 +124,11 @@ export interface DocSummary {
   recordAuto: string | null;
   /** Tags that could plausibly be the record, best guess first. */
   recordCandidates: FieldInfo[];
+  /**
+   * Fields found directly inside each candidate record, in first-seen order —
+   * what "show only" offers for whichever record is in use.
+   */
+  recordChildren: Record<string, FieldInfo[]>;
   fields: FieldInfo[];
   /** 512-bucket record density across the document, for the tape. */
   histogram: number[];
