@@ -143,7 +143,7 @@ export class FeedEngine {
       type: "block",
       docId,
       line,
-    }).then(({ from, to, text, truncated }) => ({ from, to, text, truncated }));
+    }).then(({ from, to, text, truncated, value }) => ({ from, to, text, truncated, value }));
   }
 
   search(docId: string, query: string, options: FindOptions): Promise<FindResult> {

@@ -1,4 +1,5 @@
 import type { FeedFormat } from "../types";
+import { decodeValue } from "../xml/tokenizer";
 
 /**
  * Where a formatted line sits in the nesting.
@@ -135,4 +136,76 @@ function jsonShape(line: string): LineShape {
   if (depth > 0) return { role: "open", indent };
   if (depth < 0) return { role: "close", indent };
   return { role: "flat", indent };
+}
+
+/**
+ * The value of a block that holds no other element, or null when it does.
+ *
+ * `<id>3000</id>` gives `3000`, `<fiyat para="TRY">199.00</fiyat>` gives
+ * `199.00`, and `"name": "Ceket"` gives `Ceket` — the text a reader means to
+ * paste somewhere else, without the markup around it. Entities are resolved
+ * and CDATA unwrapped for the same reason: `&amp;` in a spreadsheet cell is a
+ * bug, not a value. An element with children is left to be copied whole.
+ *
+ * `block` is the dedented text `handleBlock` collected, starting at the tag.
+ */
+export function leafValue(block: string, format: FeedFormat): string | null {
+  return format === "json" ? jsonLeafValue(block) : xmlLeafValue(block);
+}
+
+const CLOSE_TAIL = /<\/[^<>]*>\s*$/;
+
+function xmlLeafValue(block: string): string | null {
+  if (block.charCodeAt(0) !== 60) return null;
+  if (block.startsWith("</") || block.startsWith("<?") || block.startsWith("<!")) return null;
+  const openEnd = endOfTag(block, 0);
+  // `<aktif/>` holds nothing at all, which is still a value: an empty one.
+  if (block.charCodeAt(openEnd - 2) === 47) return "";
+  const tail = CLOSE_TAIL.exec(block);
+  if (!tail || tail.index < openEnd) return null;
+  const inner = block.slice(openEnd, tail.index);
+
+  let out = "";
+  let i = 0;
+  while (i < inner.length) {
+    const lt = inner.indexOf("<", i);
+    if (lt === -1) {
+      out += decodeValue(inner.slice(i));
+      break;
+    }
+    out += decodeValue(inner.slice(i, lt));
+    if (!inner.startsWith("<![CDATA[", lt)) return null; // a child element, comment or PI
+    const end = inner.indexOf("]]>", lt + 9);
+    if (end === -1) return null;
+    out += inner.slice(lt + 9, end);
+    i = end + 3;
+  }
+  return out.trim();
+}
+
+function jsonLeafValue(block: string): string | null {
+  if (block.charCodeAt(0) !== 34) return null;
+  let i = stringEnd(block, 0);
+  while (isSpace(block.charCodeAt(i))) i++;
+  if (block.charCodeAt(i) !== 58) return null;
+  const value = block.slice(i + 1).trim();
+
+  // A key inside the value means it holds other fields; copy it whole.
+  // An array of plain values has none and comes out as the array itself.
+  for (let k = 0; k < value.length; k++) {
+    const c = value.charCodeAt(k);
+    if (c === 34) {
+      k = stringEnd(value, k) - 1;
+      continue;
+    }
+    if (c === 58) return null;
+  }
+  if (value.charCodeAt(0) === 34) {
+    try {
+      return JSON.parse(value) as string;
+    } catch {
+      return null;
+    }
+  }
+  return value;
 }
