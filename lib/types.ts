@@ -192,6 +192,12 @@ export interface BlockResult {
    * copy is worse than none: half an element is not valid XML or JSON.
    */
   truncated: boolean;
+  /**
+   * True when the element held no other element, so `text` is just its value
+   * — `3000` rather than `<id>3000</id>`. A leaf is clicked for its value far
+   * more often than for its markup.
+   */
+  value: boolean;
 }
 
 export type WorkerRequest =

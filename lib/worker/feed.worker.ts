@@ -17,7 +17,7 @@ import { formatStream, runQuery } from "../xml/pipeline";
 import { formatJsonStream, runJsonQuery } from "../json/pipeline";
 import { ROOT_ITEM } from "../json/formatter";
 import { formatCsvStream, runCsvQuery, ROW_RECORD } from "../csv/pipeline";
-import { shapeOf, stripIndent } from "../format/block";
+import { leafValue, shapeOf, stripIndent } from "../format/block";
 import { Cancelled, maybeDecompress, peekStream } from "../format/read";
 import { extensionFor, mimeFor, sniffFeed } from "../format/detect";
 import { buildSearchRegex, describeQuery, foldForSearch, showOnlyTags } from "../xml/match";
@@ -679,8 +679,8 @@ async function handleBlock(req: Extract<WorkerRequest, { type: "block" }>): Prom
 
   const format = doc.summary.format;
   const lineCount = doc.index.lineCount;
-  const answer = (from: number, to: number, text: string, truncated: boolean) =>
-    post({ id: req.id, type: "block", from, to, text, truncated });
+  const answer = (from: number, to: number, text: string, truncated: boolean, value = false) =>
+    post({ id: req.id, type: "block", from, to, text, truncated, value });
 
   if (lineCount === 0) {
     answer(0, 0, "", false);
@@ -761,7 +761,9 @@ async function handleBlock(req: Extract<WorkerRequest, { type: "block" }>): Prom
   // block that is not its parent's last child ends in a comma that would make
   // the pasted fragment invalid on its own.
   if (format === "json" && text.endsWith(",")) text = text.slice(0, -1);
-  answer(from, to, text, false);
+  const value = leafValue(text, format);
+  if (value !== null) answer(from, to, value, false, true);
+  else answer(from, to, text, false);
 }
 
 async function handle(req: WorkerRequest): Promise<void> {

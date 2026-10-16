@@ -82,6 +82,16 @@ için bir satırdan çok daha okunaklıdır ve ürün beslemeleri bunlarla dolud
 ileriye bakmadan verilir: skalerler ya dizi kapanana kadar (tek satır) ya da bütçe
 aşılana kadar (kalanı satır satır) tamponlanır.
 
+**Etiket adına tıklamak kopyalar.** XML'de etiket, JSON'da anahtar adı tıklanabilir:
+
+- İçinde başka etiket/anahtar **yoksa yalnızca değeri** kopyalanır: `<id>3000</id>` →
+  `3000`, `<fiyat para="TRY">199.00</fiyat>` → `199.00`, `"name": "Ceket"` → `Ceket`.
+  CDATA sarmalayıcısı çıkarılır ve `&amp;` gibi varlıklar çözülür. Yalnızca düz
+  değerlerden oluşan JSON dizisi (`["36", "37"]`) dizi olarak kopyalanır. `<aktif/>` gibi
+  boş bir öğede panoya dokunulmaz.
+- İçinde başka etiket/anahtar **varsa** öğe, etiketleriyle birlikte bütün olarak
+  kopyalanır. Kapanış etiketine tıklamak da aynı bloğu kopyalar.
+
 **Ayraçlı beslemeler tablo olarak** çizilir: üstte yapışkan sütun cetveli, sabit
 genişlikli sütunlar, yatay kaydırma. Sığmayan hücre üç noktayla kesilir; üzerine
 gelince tamamı görünür. Cetvel, dosyanın kendi başlık satırı ekrandayken adları

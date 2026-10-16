@@ -229,7 +229,8 @@ export default function DocViewer({
   useEffect(() => () => window.clearTimeout(noteTimer.current), []);
 
   /**
-   * Copies the element, object or array a tag name belongs to, whole.
+   * Copies the element, object or array a tag name belongs to — whole when it
+   * holds other elements, just its value when it does not.
    *
    * Where the block ends is the worker's to say — it may run to the end of the
    * document, and the viewer only ever holds the rows on screen. Clicking the
@@ -256,6 +257,16 @@ export default function DocViewer({
         showNote(at, "too large to copy — use download", true);
         return;
       }
+      if (block.value) {
+        // Writing "" would wipe whatever the clipboard held, for nothing.
+        if (!block.text) {
+          showNote(at, "empty — nothing to copy", true);
+          return;
+        }
+        await clipboard.writeText(block.text);
+        showNote(at, "copied value", false);
+        return;
+      }
       await clipboard.writeText(block.text);
       const n = block.to - block.from + 1;
       showNote(at, `copied ${formatCount(n)} line${n === 1 ? "" : "s"}`, false);
@@ -269,8 +280,8 @@ export default function DocViewer({
      and nothing else on the line offers to be clicked. */
   const copyHint =
     format === "json"
-      ? "Click to copy this key and everything inside it"
-      : "Click to copy this element and everything inside it";
+      ? "Click to copy this key's value, or the whole key if it holds other keys"
+      : "Click to copy this element's value, or the whole element if it holds other elements";
   /* Rows are only markable in the table view: there one line is one product,
      which is the thing a reader actually wants to keep an eye on. */
   const selectable = table && !!onSelectedChange;
